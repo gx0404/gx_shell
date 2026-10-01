@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,16 @@ def run_ps(exe, body, overrides=None):
                           encoding="utf-8-sig", errors="replace", timeout=120)
 
 
+def make_repo(testcase, unicode_name=False):
+    temp = tempfile.TemporaryDirectory(prefix="gx-plan-")
+    testcase.addCleanup(temp.cleanup)
+    repo = Path(temp.name)
+    if unicode_name:
+        repo = repo / "gx项目-repo"
+        repo.mkdir()
+    return repo
+
+
 def functions_only():
     return ("$tokens=$null; $errors=$null; $ast=[Management.Automation.Language.Parser]::ParseFile("
             + quote(SCRIPT) + ", [ref]$tokens, [ref]$errors); if ($errors.Count) { throw 'Parse failed' }; "
@@ -49,6 +60,8 @@ class SourceChecks(unittest.TestCase):
         for forbidden in ("Get-ChildItem Env:", "GetEnvironmentVariables(", "WriteAllText(",
                           "Win32_VideoController", "cargo build", "rustup update"):
             self.assertNotIn(forbidden, text)
+        for required in (".local\\build", ".local\\sources", "Get-ComponentRoot", "plan-"):
+            self.assertIn(required, text)
 
 
 @unittest.skipUnless(HOSTS, "Windows PowerShell or PowerShell 7 on Windows required")
@@ -104,17 +117,75 @@ ConvertTo-Json -InputObject @($result)
             with self.subTest(host=name):
                 self.assertEqual(self.decoded(run_ps(exe, body)), [True] * 8)
 
-    def test_build_root_is_short_absolute_ascii(self):
-        body = functions_only() + r"""
-$bad=@('relative', 'C:', 'C:\', 'C:\bad name', 'C:\NUL.txt', 'C:\a\..\b', 'C:\a.', ('C:\' + [char]0x4e2d), ('C:\' + ('a'*40)))
-$result=foreach ($path in $bad) { try { $null=Get-BuildRoot $path 'C:\repo'; $false } catch { $true } }
-[ordered]@{bad=@($result); good=(Get-BuildRoot 'C:/gx-b' 'C:\repo')} | ConvertTo-Json
-"""
+    def test_build_root_run_directory_contract(self):
+        repo = make_repo(self)
+        base = repo / ".local" / "build"
+        taken = base / "run-taken"
+        taken.mkdir(parents=True)
+        cases = [
+            ("relative", "relative"),
+            ("drive_letter", "C:"),
+            ("drive_root", "C:\\"),
+            ("outside", str(repo / "other" / "run")),
+            ("nested", str(base / "a" / "b")),
+            ("base_itself", str(base)),
+            ("spaced", str(base / "bad name")),
+            ("reserved", str(base / "NUL")),
+            ("too_long", str(base / ("a" * 33))),
+            ("unicode_run", str(base / "运行")),
+            ("taken", str(taken)),
+        ]
+        lines = ["$repo=" + quote(repo)]
+        for key, value in cases:
+            lines.append("$" + key + "=(& { try { $null=Get-BuildRoot " + quote(value)
+                         + " $repo; $false } catch { $true } })")
+        lines.append("$good=(Get-BuildRoot " + quote(base / "run-1") + " $repo)")
+        lines.append("$slashes=(Get-BuildRoot " + quote(str(base / "run-2").replace("\\", "/")) + " $repo)")
+        lines.append("$defaulted=(Get-BuildRoot '' $repo)")
+        entries = "; ".join(key + "=$" + key for key, _ in cases)
+        lines.append("[ordered]@{" + entries + "; good=$good; slashes=$slashes; defaulted=$defaulted} | ConvertTo-Json")
+        body = functions_only() + "; ".join(lines)
         for name, exe in HOSTS:
             with self.subTest(host=name):
                 data = self.decoded(run_ps(exe, body))
-                self.assertEqual(data["bad"], [True] * 9)
-                self.assertEqual(data["good"], r"C:\gx-b")
+                for key, _ in cases:
+                    self.assertTrue(data[key], key)
+                self.assertEqual(os.path.normcase(data["good"]), os.path.normcase(str(base / "run-1")))
+                self.assertEqual(os.path.normcase(data["slashes"]), os.path.normcase(str(base / "run-2")))
+                defaulted = Path(data["defaulted"])
+                self.assertEqual(os.path.normcase(str(defaulted.parent)), os.path.normcase(str(base)))
+                self.assertRegex(defaulted.name, r"^plan-\d{8}-\d{6}$")
+                self.assertFalse(defaulted.exists())
+
+    def test_component_root_must_stay_under_sources(self):
+        repo = make_repo(self, unicode_name=True)
+        sources = repo / ".local" / "sources"
+        bad = [
+            str(repo / "herdr"),
+            str(repo),
+            str(repo / ".local"),
+            str(sources),
+            str(repo / ".local" / "sources2" / "herdr"),
+            str(sources / "herdr" / ".." / ".." / "herdr"),
+            "herdr",
+            "D:",
+        ]
+        lines = ["$base=" + quote(sources)]
+        for index, value in enumerate(bad):
+            lines.append("$b" + str(index) + "=(& { try { $null=Get-ComponentRoot 'herdr' " + quote(value)
+                         + " $base; $false } catch { $true } })")
+        lines.append("$good=(Get-ComponentRoot 'herdr' " + quote(sources / "herdr") + " $base)")
+        lines.append("$deep=(Get-ComponentRoot 'herdr' " + quote(sources / "nested" / "herdr") + " $base)")
+        entries = "; ".join("b" + str(index) + "=$b" + str(index) for index in range(len(bad)))
+        lines.append("[ordered]@{" + entries + "; good=$good; deep=$deep} | ConvertTo-Json")
+        body = functions_only() + "; ".join(lines)
+        for name, exe in HOSTS:
+            with self.subTest(host=name):
+                data = self.decoded(run_ps(exe, body))
+                for index, value in enumerate(bad):
+                    self.assertTrue(data["b{0}".format(index)], value)
+                self.assertEqual(os.path.normcase(data["good"]), os.path.normcase(str(sources / "herdr")))
+                self.assertEqual(os.path.normcase(data["deep"]), os.path.normcase(str(sources / "nested" / "herdr")))
 
     def test_component_identity_clean_dirty_parent_and_mismatch(self):
         body = functions_only() + """
@@ -139,13 +210,13 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
 
     def test_real_json_cache_partitioning_and_secrets(self):
         reports = []
-        drive = Path(SCRIPT.resolve().anchor)
-        root = drive / "gx-plan-test-unused"
-        existed = root.exists()
+        repo = make_repo(self)
+        run = repo / ".local" / "build" / "run-plan"
+        boundary = os.path.normcase(str(run)) + os.sep
         for name, exe in HOSTS:
             with self.subTest(host=name):
-                body = ("& " + quote(SCRIPT) + " -Format Json -BuildRoot " + quote(root)
-                        + " -RepoRoot " + quote(root / "absent")
+                body = ("& " + quote(SCRIPT) + " -Format Json -BuildRoot " + quote(run)
+                        + " -RepoRoot " + quote(repo)
                         + " -Component herdr -ComponentRevisions @{herdr=('a'*40); ohmyzsh=('b'*40); wezterm=('c'*40)}")
                 data = self.decoded(run_ps(exe, body, {"GH_TOKEN": SENTINEL, "GX_PRIVATE_PASSWORD": SENTINEL,
                                                      "GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1", "GX_MEMORY_BUDGET_GB": "6"}))
@@ -155,28 +226,110 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 self.assertEqual(data["environment"]["CARGO_NET_OFFLINE"], "true")
                 self.assertEqual(data["environment"]["RUSTUP_AUTO_INSTALL"], "0")
                 self.assertNotIn("RUSTC_WRAPPER", data["environment"])
-                caches = []
+                paths = data["paths"]
+                self.assertEqual(os.path.normcase(paths["build_root"]), os.path.normcase(str(run)))
+                self.assertEqual(paths["run_name"], "run-plan")
+                self.assertEqual(os.path.normcase(paths["repo_root"]), os.path.normcase(str(repo)))
+                self.assertEqual(os.path.normcase(paths["sources_root"]),
+                                 os.path.normcase(str(repo / ".local" / "sources")))
+                self.assertFalse(paths["exists"])
+                self.assertEqual(paths["build_root"], data["environment"]["GX_BUILD_ROOT"])
+                self.assertEqual(paths["build_root"], data["environment"]["GX_LOCAL_BUILD_ROOT"])
+                leaves = []
                 for component, sha in zip(("herdr", "ohmyzsh", "wezterm"), ("a"*40, "b"*40, "c"*40)):
-                    entry = data["paths"]["components"][component]
-                    cache = entry["paths"]["cache"]
-                    caches.append(cache)
-                    self.assertIn(sha, cache)
-                    self.assertIn(data["paths"]["toolchain_key"], cache)
-                    self.assertTrue(cache.endswith("x86_64-pc-windows-msvc"))
-                    self.assertTrue(cache.isascii())
+                    entry = paths["components"][component]
+                    self.assertEqual(entry["revision"], sha)
+                    self.assertEqual(os.path.normcase(entry["root"]),
+                                     os.path.normcase(str(repo / ".local" / "sources" / component)))
                     self.assertFalse(entry["source_verified"])
-                self.assertEqual(len(set(caches)), 3)
-                self.assertEqual(root.exists(), existed)
+                    planned = entry["paths"]
+                    leaf = Path(planned["cache"]).name
+                    self.assertRegex(leaf, r"^" + component + r"-[0-9a-f]{16}$")
+                    leaves.append(leaf)
+                    for key in ("cache", "work", "cargo_home", "cargo_target", "sccache", "zsh", "logs"):
+                        value = planned[key]
+                        self.assertTrue(os.path.normcase(value).startswith(boundary), key)
+                        self.assertLessEqual(len(value), 120, key)
+                    self.assertEqual(planned["cargo_home"], planned["cache"] + "\\cargo")
+                    self.assertEqual(planned["cargo_target"], planned["cache"] + "\\target")
+                    self.assertEqual(planned["logs"], planned["cache"] + "\\logs")
+                    self.assertEqual(Path(planned["work"]).name, leaf)
+                self.assertEqual(len(set(leaves)), 3)
+                self.assertFalse(run.exists())
                 reports.append(data)
         if len(reports) > 1:
             self.assertEqual(reports[0]["paths"]["toolchain_key"], reports[1]["paths"]["toolchain_key"])
+            for component in ("herdr", "ohmyzsh", "wezterm"):
+                self.assertEqual(reports[0]["paths"]["components"][component]["paths"],
+                                 reports[1]["paths"]["components"][component]["paths"])
+
+    def test_non_ascii_repo_root_resolves(self):
+        repo = make_repo(self, unicode_name=True)
+        run = repo / ".local" / "build" / "r1"
+        for name, exe in HOSTS:
+            with self.subTest(host=name):
+                body = ("& " + quote(SCRIPT) + " -Format Json -RepoRoot " + quote(repo)
+                        + " -BuildRoot " + quote(run) + " -Component herdr"
+                        + " -ComponentRevisions @{herdr=('a'*40)}")
+                data = self.decoded(run_ps(exe, body, {"GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1",
+                                                       "GX_MEMORY_BUDGET_GB": "6"}))
+                paths = data["paths"]
+                self.assertEqual(os.path.normcase(paths["repo_root"]), os.path.normcase(str(repo)))
+                self.assertEqual(os.path.normcase(paths["build_root"]), os.path.normcase(str(run)))
+                cache = paths["components"]["herdr"]["paths"]["cache"]
+                self.assertTrue(os.path.normcase(cache).startswith(os.path.normcase(str(run)) + os.sep))
+                self.assertLessEqual(len(cache) + len("\\sccache"), 120)
+                self.assertFalse(run.exists())
+
+    def test_component_roots_outside_sources_are_rejected(self):
+        repo = make_repo(self)
+        run = repo / ".local" / "build" / "run-src"
+        cases = [
+            "@{herdr=" + quote(repo / "elsewhere" / "herdr") + "}",
+            "@{wezterm=" + quote(run / "wezterm") + "}",
+            "@{ohmyzsh=" + quote(repo / ".local" / "sources") + "}",
+        ]
+        for name, exe in HOSTS:
+            for roots in cases:
+                with self.subTest(host=name, roots=roots):
+                    result = run_ps(exe, "& " + quote(SCRIPT) + " -Format Json -RepoRoot " + quote(repo)
+                                    + " -BuildRoot " + quote(run) + " -ComponentRoots " + roots,
+                                    {"GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1", "GX_MEMORY_BUDGET_GB": "6"})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("component roots must stay below", result.stderr)
+                    self.assertNotIn(str(repo), result.stderr)
+
+    def test_build_root_leaves_budget_for_component_paths(self):
+        temp = tempfile.TemporaryDirectory(prefix="gx-plan-")
+        self.addCleanup(temp.cleanup)
+        repo = Path(temp.name) / ("d" * 40)
+        repo.mkdir()
+        run = repo / ".local" / "build" / ("r" * 32)
+        for name, exe in HOSTS:
+            with self.subTest(host=name):
+                result = run_ps(exe, "& " + quote(SCRIPT) + " -Format Json -RepoRoot " + quote(repo)
+                                + " -BuildRoot " + quote(run)
+                                + " -ComponentRevisions @{herdr=('a'*40)}",
+                                {"GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1", "GX_MEMORY_BUDGET_GB": "6"})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("120", result.stderr)
+                self.assertNotIn(str(repo), result.stderr)
 
     def test_script_file_invocation_resolves_its_default_repository(self):
+        real = SCRIPT.parent.parent
         for name, exe in HOSTS:
             with self.subTest(host=name):
                 body = "& " + quote(SCRIPT) + " -Format Json -Component herdr"
                 data = self.decoded(run_ps(exe, body, {"GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1", "GX_MEMORY_BUDGET_GB": "6"}))
-                self.assertEqual(data["paths"]["components"]["herdr"]["root"], str(SCRIPT.parent.parent / "herdr"))
+                paths = data["paths"]
+                self.assertEqual(os.path.normcase(paths["repo_root"]), os.path.normcase(str(real)))
+                self.assertEqual(os.path.normcase(paths["components"]["herdr"]["root"]),
+                                 os.path.normcase(str(real / ".local" / "sources" / "herdr")))
+                defaulted = Path(paths["build_root"])
+                self.assertEqual(os.path.normcase(str(defaulted.parent)),
+                                 os.path.normcase(str(real / ".local" / "build")))
+                self.assertRegex(defaulted.name, r"^plan-\d{8}-\d{6}$")
+                self.assertFalse(defaulted.exists())
 
     def test_available_memory_reduces_automatic_parallelism(self):
         body = functions_only() + "Get-Budget @{physical_cores=14; logical_cores=20; total_memory_gib=48; available_memory_gib=20} '' '' '' | ConvertTo-Json"
@@ -195,19 +348,26 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 self.assertNotEqual(a, b)
 
     def test_real_environment_and_error_redaction(self):
+        repo = SCRIPT.parent.parent
+        run = repo / ".local" / "build" / "plan-env-check"
+        self.assertFalse(run.exists())
         for name, exe in HOSTS:
             with self.subTest(host=name):
                 result = run_ps(exe, "& " + quote(SCRIPT) + " -Format Environment",
                                 {"GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1", "GX_MEMORY_BUDGET_GB": "6",
-                                 "GX_BUILD_ROOT": "C:/gx-b", "GH_TOKEN": SENTINEL})
+                                 "GX_BUILD_ROOT": str(run), "GH_TOKEN": SENTINEL})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertNotIn(SENTINEL, result.stdout + result.stderr)
                 self.assertIn("$env:GX_CPU_JOBS = '1'", result.stdout)
-                self.assertIn(r"$env:GX_LOCAL_BUILD_ROOT = 'C:\gx-b'", result.stdout)
+                self.assertIn("$env:GX_LOCAL_BUILD_ROOT = " + quote(run), result.stdout)
                 invalid = run_ps(exe, "& " + quote(SCRIPT) + " -Format Json", {"GX_BUILD_ROOT": SENTINEL})
                 self.assertNotEqual(invalid.returncode, 0)
                 self.assertNotIn(SENTINEL, invalid.stdout + invalid.stderr)
-                self.assertIn("GX_BUILD_ROOT", invalid.stderr)
+                self.assertIn("BuildRoot", invalid.stderr)
+                outside = run_ps(exe, "& " + quote(SCRIPT) + " -Format Json",
+                                 {"GX_BUILD_ROOT": str(repo / "other" / "run")})
+                self.assertNotEqual(outside.returncode, 0)
+                self.assertNotIn(str(repo), outside.stderr)
 
 
 if __name__ == "__main__":

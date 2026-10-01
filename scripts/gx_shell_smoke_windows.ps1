@@ -105,10 +105,213 @@ function Step([string]$Name) { Write-Host "=== $Name" }
 function Refresh-Path {
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 }
-function Run-Setup([string]$File, [string]$Label, [string[]]$Extra = @()) {
+function Initialize-SetupJob {
+    if ('GxSmokeProcessJob' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
+public sealed class GxSmokeProcessJob : IDisposable {
+    [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
+        public long ProcessTime, JobTime;
+        public uint Flags;
+        public UIntPtr MinimumWorkingSet, MaximumWorkingSet;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass, SchedulingClass;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct IoCounters {
+        public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct ExtendedLimits {
+        public BasicLimits Basic;
+        public IoCounters Io;
+        public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct Accounting {
+        public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
+        public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct StartupInfo {
+        public int Size;
+        public string Reserved, Desktop, Title;
+        public uint X, Y, XSize, YSize, XChars, YChars, Fill, Flags;
+        public ushort ShowWindow, ReservedSize;
+        public IntPtr ReservedPointer, Input, Output, Error;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct ProcessInfo {
+        public IntPtr Process, Thread;
+        public uint ProcessId, ThreadId;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits info, uint size);
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+    static extern bool QueryAccounting(IntPtr job, int kind, out Accounting info, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+    static extern bool QueryIds(IntPtr job, int kind, IntPtr info, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool CreateProcess(string application, StringBuilder command, IntPtr processAttributes,
+        IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory,
+        ref StartupInfo startup, out ProcessInfo process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint code);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+
+    IntPtr job, root;
+    public uint RootProcessId { get; private set; }
+    static void Check(bool success) { if (!success) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+
+    public GxSmokeProcessJob(string file, string arguments, string directory) {
+        if (!System.IO.Path.IsPathFullyQualified(file) || file.Contains("\""))
+            throw new ArgumentException("Executable must be an absolute path without quotes");
+        var process = new ProcessInfo();
+        try {
+            job = CreateJobObject(IntPtr.Zero, null);
+            Check(job != IntPtr.Zero);
+            var limits = new ExtendedLimits();
+            limits.Basic.Flags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; no breakaway.
+            Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()));
+            var startup = new StartupInfo();
+            startup.Size = Marshal.SizeOf<StartupInfo>();
+            Check(CreateProcess(file, new StringBuilder("\"" + file + "\" " + arguments),
+                IntPtr.Zero, IntPtr.Zero, false, 0x4, IntPtr.Zero, directory, ref startup, out process));
+            root = process.Process;
+            RootProcessId = process.ProcessId;
+            Check(AssignProcessToJobObject(job, root));
+            Check(ResumeThread(process.Thread) != uint.MaxValue);
+        } catch {
+            if (process.Process != IntPtr.Zero) {
+                TerminateProcess(process.Process, 1);
+                WaitForSingleObject(process.Process, 5000);
+            }
+            Dispose();
+            throw;
+        } finally {
+            if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread);
+        }
+    }
+    Accounting ReadAccounting() {
+        Accounting result;
+        Check(QueryAccounting(job, 1, out result, (uint)Marshal.SizeOf<Accounting>(), IntPtr.Zero));
+        return result;
+    }
+    public uint ActiveProcesses { get { return ReadAccounting().ActiveProcesses; } }
+    public uint TotalProcesses { get { return ReadAccounting().TotalProcesses; } }
+    public bool WaitForEmpty(int milliseconds) {
+        var watch = Stopwatch.StartNew();
+        while (ActiveProcesses != 0) {
+            if (watch.ElapsedMilliseconds >= milliseconds) return false;
+            Thread.Sleep(50);
+        }
+        return true;
+    }
+    public int[] ProcessIds() {
+        for (int capacity = 64; capacity <= 65536; capacity *= 2) {
+            int size = 8 + capacity * IntPtr.Size;
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try {
+                if (!QueryIds(job, 3, buffer, (uint)size, IntPtr.Zero)) {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == 234) continue;
+                    throw new Win32Exception(error);
+                }
+                int count = Marshal.ReadInt32(buffer, 4);
+                if (count < 0 || count > capacity) throw new InvalidOperationException("Invalid job process list");
+                var result = new int[count];
+                for (int i = 0; i < count; i++)
+                    result[i] = checked((int)Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size).ToInt64());
+                return result;
+            } finally { Marshal.FreeHGlobal(buffer); }
+        }
+        throw new InvalidOperationException("Job process list exceeds diagnostic limit");
+    }
+    public uint ExitCode {
+        get {
+            if (WaitForSingleObject(root, 0) != 0) throw new InvalidOperationException("Root process has not exited");
+            uint code;
+            Check(GetExitCodeProcess(root, out code));
+            return code;
+        }
+    }
+    public void Terminate() { Check(TerminateJobObject(job, 1460)); }
+    public void Dispose() {
+        if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
+        if (root != IntPtr.Zero) { CloseHandle(root); root = IntPtr.Zero; }
+        GC.SuppressFinalize(this);
+    }
+    ~GxSmokeProcessJob() { Dispose(); }
+}
+'@
+}
+function Invoke-OwnedProcessTree([string]$File, [string]$Arguments,
+    [ValidatePattern('^[A-Za-z0-9._-]+$')][string]$Label, [ValidateRange(1, 1800)][int]$Seconds) {
+    Initialize-SetupJob
+    $job = $null
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $record = [ordered]@{ status = 'STARTING'; file = $File; arguments = $Arguments; timeout_seconds = $Seconds;
+        started_utc = [DateTime]::UtcNow.ToString('o'); root_pid = $null; exit_code = $null;
+        total_processes = 0; timeout_process_ids = @(); timeout_processes = @();
+        cleanup_complete = $false; remaining_process_ids = @(); error = $null; elapsed_seconds = 0 }
+    try {
+        $job = [GxSmokeProcessJob]::new($File, $Arguments, $Evidence)
+        $record.root_pid = $job.RootProcessId
+        $record.status = 'RUNNING'
+        if (-not $job.WaitForEmpty($Seconds * 1000)) {
+            $record.status = 'TIMEOUT'
+            try {
+                $record.timeout_process_ids = @($job.ProcessIds())
+                $record.timeout_processes = @(foreach ($processId in $record.timeout_process_ids) {
+                    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                    if ($process) {
+                        try { [pscustomobject]@{ pid = $processId; name = $process.ProcessName; path = $process.Path; start_time = $process.StartTime.ToUniversalTime().ToString('o') } }
+                        finally { $process.Dispose() }
+                    }
+                })
+            } catch { $record.error = "Timeout diagnostics: $_" }
+            throw [TimeoutException]::new("$Label exceeded $Seconds seconds; this is a smoke failure, not an occupied-file refusal.")
+        }
+        $record.exit_code = $job.ExitCode
+        $record.total_processes = $job.TotalProcesses
+        $record.status = 'EXITED'
+        return [pscustomobject]@{ ExitCode = $record.exit_code; RootProcessId = $record.root_pid }
+    } catch {
+        if ($record.status -ne 'TIMEOUT') { $record.status = 'ERROR' }
+        $record.error = "$($record.error) $_".Trim()
+        throw
+    } finally {
+        try {
+            if ($job) {
+                if ($record.status -ne 'EXITED') { $job.Terminate() }
+                $record.cleanup_complete = $job.WaitForEmpty(10000)
+                $record.remaining_process_ids = @($job.ProcessIds())
+                $record.total_processes = $job.TotalProcesses
+                if (-not $record.cleanup_complete) { throw "$Label process-tree cleanup exceeded 10 seconds" }
+            }
+        } finally {
+            if ($job) { $job.Dispose() }
+            $record.elapsed_seconds = $watch.Elapsed.TotalSeconds
+            $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Evidence "$Label-process.json") -Encoding utf8
+        }
+    }
+}
+function Run-Setup([string]$File, [string]$Label, [string[]]$Extra = @(),
+    [ValidateRange(1, 1800)][int]$Seconds = 600, [switch]$ExpectRefusal) {
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$(Join-Path $Evidence "$Label.log")`"") + $Extra
-    $process = Start-Process -FilePath $File -ArgumentList $arguments -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "$Label exited with $($process.ExitCode)" }
+    $process = Invoke-OwnedProcessTree $File ($arguments -join ' ') $Label $Seconds
+    if ($ExpectRefusal) {
+        if ($process.ExitCode -eq 0) { throw "$Label did not refuse an occupied runtime file" }
+    } elseif ($process.ExitCode -ne 0) { throw "$Label exited with $($process.ExitCode)" }
 }
 function Capture([string]$Name, [string]$File, [string[]]$Arguments) {
     $text = & $File @Arguments 2>&1 | Out-String
@@ -247,7 +450,7 @@ function Stop-Installation {
 }
 function Run-Uninstall([string]$Label) {
     $userBefore = UserData-State
-    Run-Setup (Join-Path $app 'unins000.exe') $Label
+    Run-Setup (Join-Path $app 'unins000.exe') $Label -Seconds 180
     for ($i = 0; $i -lt 120 -and (Test-Path -LiteralPath $app); $i++) { Start-Sleep -Milliseconds 500 }
     $left = @(Get-ChildItem -LiteralPath $app -Recurse -Force -Name -ErrorAction SilentlyContinue | Select-Object -First 50)
     Assert (-not (Test-Path -LiteralPath $app)) "$app remains after uninstall; remaining files: $($left -join ', ')"
@@ -626,9 +829,7 @@ $occupiedHash = (Get-FileHash -LiteralPath $occupied).Hash
 $handle = [IO.File]::Open($occupied, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 try {
     foreach ($case in @(@{ File = $Installer; Label = 'install-in-use' }, @{ File = (Join-Path $app 'unins000.exe'); Label = 'uninstall-in-use' })) {
-        $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$(Join-Path $Evidence ($case.Label + '.log'))`"")
-        $process = Start-Process -FilePath $case.File -ArgumentList $arguments -Wait -PassThru
-        Assert ($process.ExitCode -ne 0) "$($case.Label) did not refuse an occupied runtime file"
+        Run-Setup $case.File $case.Label -Seconds 45 -ExpectRefusal
         Assert ((Test-Path -LiteralPath (Join-Path $app 'bin\gx-zsh.exe')) -and (Test-Path -LiteralPath (Join-Path $app 'unins000.exe'))) 'an in-use refusal removed installed entry points'
         Assert ((Get-ItemProperty -LiteralPath 'HKCU:\Software\GX Shell').InstallDir -ceq $installDir) 'an in-use refusal changed ownership'
         Assert (@(Owned-PathEntries).Count -eq 1 -and @(Owned-Fonts).Count -eq 8) 'an in-use refusal changed PATH or fonts'

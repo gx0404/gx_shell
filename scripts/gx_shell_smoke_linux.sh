@@ -302,8 +302,78 @@ PY
         fail 'the packaged herdr completion is missing'
 
     step herdr server with a real GX Zsh pane
-    run_user "$GX_SMOKE_PYTHON" -I -B "$herdr_probe" --herdr /usr/lib/ohmyzsh-gx/lib/herdr/herdr \
-        --zsh /usr/lib/ohmyzsh-gx/libexec/zsh/zsh --output "$evidence/herdr-probe" > "$evidence/herdr-probe.json"
+    run_user "$GX_SMOKE_PYTHON" -I -B - "$herdr_probe" "$evidence/herdr-probe" <<'PY'
+import json
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+
+
+def probe_socket_budget(output):
+    # Locked probe: output/config, gx-probe- plus 16 hex digits; herdr session sockets.
+    session = output / 'config/herdr/sessions' / ('gx-probe-' + 'f' * 16)
+    paths = [str(session / name) for name in ('herdr.sock', 'herdr-client.sock')]
+    records = [{'path_template': path, 'bytes_with_nul': len(path.encode('utf-8')) + 1}
+               for path in paths]
+    if any(record['bytes_with_nul'] > 108 for record in records):
+        raise ValueError(f'probe socket path exceeds Linux sun_path capacity (108 bytes including NUL): {records}')
+    return records
+
+
+def run_short_probe(probe, archive):
+    if archive.exists() or archive.is_symlink():
+        raise ValueError(f'probe evidence must be new: {archive}')
+    runtime = Path(tempfile.mkdtemp(prefix='gxh-', dir='/tmp')).resolve()
+    output = runtime / 'p'
+    metadata = {'runtime_output': str(output), 'evidence_output': str(archive),
+                'sun_path_capacity_bytes': 108, 'probe_exit_code': None, 'excluded_runtime_entries': []}
+    metadata_path = archive.with_name(archive.name + '.runtime.json')
+    stderr_path = archive.with_name(archive.name + '.stderr.log')
+
+    def ignore_runtime_entries(directory, names):
+        ignored = []
+        for name in names:
+            path = Path(directory) / name
+            mode = path.lstat().st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                ignored.append(name)
+                metadata['excluded_runtime_entries'].append(str(path.relative_to(output)))
+        return ignored
+
+    try:
+        metadata['socket_budget'] = probe_socket_budget(output)
+        metadata_path.write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
+        with archive.with_suffix('.json').open('wb') as stdout, stderr_path.open('wb') as stderr:
+            result = subprocess.run([sys.executable, '-I', '-B', str(probe),
+                                     '--herdr', '/usr/lib/ohmyzsh-gx/lib/herdr/herdr',
+                                     '--zsh', '/usr/lib/ohmyzsh-gx/libexec/zsh/zsh',
+                                     '--output', str(output)], stdout=stdout, stderr=stderr)
+        metadata['probe_exit_code'] = result.returncode
+    finally:
+        # The probe waits for its own server before returning; archive even a failed probe.
+        try:
+            if output.is_symlink():
+                raise OSError(f'probe output must not be a symlink: {output}')
+            if output.exists():
+                shutil.copytree(output, archive, ignore=ignore_runtime_entries)
+            else:
+                archive.mkdir()
+            metadata_path.write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
+        except Exception:
+            print(f'Probe evidence copy failed; runtime retained at {runtime}', file=sys.stderr)
+            raise
+        shutil.rmtree(runtime)
+    if result.returncode:
+        print(stderr_path.read_text(encoding='utf-8', errors='replace'), file=sys.stderr, end='')
+    return result.returncode
+
+
+if __name__ == '__main__':
+    raise SystemExit(run_short_probe(*map(Path, sys.argv[1:])))
+PY
     grep -q '"status": "PASS"' "$evidence/herdr-probe.json"
 
     step WezTerm seeds its configuration and finds the bundled fonts

@@ -2,7 +2,7 @@
 
 主仓负责 GX Shell 的安装器、组件整合与发布；三个 fork 负责源码、上游同步与自身测试。
 主仓通过 `components.lock.json` 锁定各 fork 既有默认分支的完整 SHA，分支对应关系见「来源锁与身份」。
-构建链为外部 checkout → stage → 根 assemble。
+构建链为独立组件 checkout → stage → 根 assemble；CI 的组件 checkout 可置于 `RUNNER_TEMP`，但本地/复验的源码、编译、构建、stage、assembly、dist、cache 与日志必须全部位于根仓 `.local/` 下，目录契约见 `README.md`。
 安装、来源锁更新、本地资源规划和当前 PENDING 项见 `README.md`。
 
 ## 规则入口
@@ -27,11 +27,17 @@
   `feature/gx_herdr`、`feature/gx_ohmyzsh`、`feature/gx_wezterm`。构建与 checkout 只使用锁定 SHA，
   不能解析浮动分支替代它。`scripts/gx_shell_sources.py check` 验结构与原始字节 SHA-256；
   `check --require-remote` 另验 commit 存在且可从对应默认分支到达。来源更新必须显式执行、审阅 diff。
-- **外部 checkout**：CI 根 checkout 与组件 checkout 分离，组件放在 `RUNNER_TEMP`；本地放仓外短 ASCII
-  路径。三个 fork 各有独立 Git 元数据；WezTerm 递归初始化自身 `.gitmodules`，根仓不再维护组件子模块。
-  不复用有改动、SHA 不符、共享父仓 Git 元数据的目录，不 reset 或清除用户工作来凑齐构建条件。
-- **stage 是组件的唯一打包输入**：组件按各自锁定 revision 生成完整 stage；根
-  `scripts/gx_shell_stage_shell.sh` 对接外部 Oh My Zsh/herdr 入口，根 packager 不再读取根组件目录。
+- **checkout 身份与路径边界**：CI 根 checkout 与组件 checkout 分离，CI 组件放在 `RUNNER_TEMP`；这是独立的 Git
+  身份边界，不等同于本地路径规则。三个 fork 各有独立 Git 元数据；WezTerm 递归初始化自身 `.gitmodules`，
+  根仓不再维护组件子模块。本地与复验 checkout 必须放在根仓 `.local/sources/<component>`，不得使用仓外目录
+  或其他临时根；不复用有改动、SHA 不符、共享父仓 Git 元数据的目录，不 reset 或清除用户工作来凑齐构建条件。
+- **本地/复验目录契约**：本地编译、构建、stage、assembly、dist、cache、日志及其临时工作目录必须位于根仓
+  `.local/build/<run>/`；组件源码和独立 Git 元数据位于 `.local/sources/<component>/`。`.local/` 全目录由根
+  `.gitignore` 忽略；每轮使用新的 `<run>`，失败时保留日志、锁 digest、provenance 与 stage 回执。若用户另要求
+  CI 的组件源码和编译目录也必须根内，应另行设计最小化 CI checkout 方案，不得把 CI 例外猜作本地规则。
+- **stage 是组件的唯一打包输入**：组件按各自锁定 revision 生成完整 stage；CI 可从 `RUNNER_TEMP` 的独立
+  checkout 产出 stage，本地/复验只能从 `.local/sources` 产出并把 stage 写入 `.local/build/<run>`；根
+  `scripts/gx_shell_stage_shell.sh` 对接对应 source root，根 packager 不再读取根组件目录。
   组装记录根 coordinator SHA、三个不同来源的 revision、锁快照及 digest、构建回执与完整文件清单，
   不能再要求四仓 SHA 相同。herdr 必须带包身份及对应源码；缺文件、散列不符、同名字体内容不同、路径冲突
   或非契约允许的符号链接/junction 一律拒绝。packager 的 schema 2 与来源锁的 schema 1 不可混淆。
@@ -41,8 +47,9 @@
   `dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager、安装生命周期与硬件 GPU 冒烟入口，更新锁并重新验收。
 - **local 永远不可发布**：Windows 先用 `scripts/gx_shell_local_build.ps1` 做只读 CPU/内存规划。
   Cargo、CMake、Zsh 共用预算，组件串行，不把 jobs 乘以组件数；GPU 只用于后续 runtime smoke，不用于编译。
-  本地构建用 `GX_LOCAL_BUILD_ROOT`，herdr 回执为 `builder=local`；组装必须 `--allow-dirty`，
-  产物带 `-local`，不得提升为可发布包。环境不能带 `GH_TOKEN`/`GITHUB_TOKEN`，不得伪造 CI/runner 身份。
+  本地构建根固定为当前根仓的 `.local/build/<run>`（通过 `GX_LOCAL_BUILD_ROOT` 传递），缓存和日志也必须留在
+  `.local/`；herdr 回执为 `builder=local`，组装必须 `--allow-dirty`，产物带 `-local`，不得提升为可发布包。
+  环境不能带 `GH_TOKEN`/`GITHUB_TOKEN`，不得伪造 CI/runner 身份。
 - **发版门禁**：只走 `.github/workflows/release.yml`；tag 必须等于根 CHANGELOG 最大 SemVer，日期
   不能是 `(TBD)`，coordinator commit 必须在 `main` 上。来源锁、组件测试、两平台构建、PTY/nextest、
   Inno Setup 7.1、安装与 runtime smoke、两平台 provenance/散列校验都通过后才能发布；上传清单以

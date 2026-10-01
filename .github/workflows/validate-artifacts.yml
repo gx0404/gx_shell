@@ -1,0 +1,305 @@
+name: validate-artifacts
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: 'Completed release.yml run ID; existing packages only'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Completed release.yml run ID containing both original release artifacts'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: validate-artifacts-${{ inputs.source_run_id }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUTF8: '1'
+  TZ: UTC
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+
+jobs:
+  prepare:
+    if: github.repository == 'gx0404/gx_shell'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      lock_digest: ${{ steps.source.outputs.lock_digest }}
+      inputs_digest: ${{ steps.source.outputs.inputs_digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Download and validate both source artifact identities
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/gx_shell_validate_artifacts.py inspect --source-run-id "$SOURCE_RUN_ID" \
+            --components-lock components.lock.json --output "$RUNNER_TEMP/validation-source" --github-output
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-source
+          path: ${{ runner.temp }}/validation-source
+          if-no-files-found: ignore
+          retention-days: 14
+
+  smoke-linux:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['20.04', '24.04']
+    env:
+      EXPECTED_INPUTS_DIGEST: ${{ needs.prepare.outputs.inputs_digest }}
+      GX_UBUNTU: ${{ matrix.ubuntu }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Create fresh evidence directory
+        run: mkdir "$RUNNER_TEMP/evidence"
+      - name: Download and verify original Linux package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/gx_shell_validate_artifacts.py download --source-run-id "$SOURCE_RUN_ID" \
+            --platform linux --expected-inputs-digest "$EXPECTED_INPUTS_DIGEST" \
+            --components-lock components.lock.json --output "$RUNNER_TEMP/validation-inputs"
+      - name: Checkout the original locked external probe without credentials
+        run: |
+          set -euo pipefail
+          test -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}"
+          python scripts/gx_shell_sources.py checkout \
+            --lock "$RUNNER_TEMP/validation-inputs/components.lock.json" \
+            --output "$RUNNER_TEMP/sources" --component ohmyzsh > "$RUNNER_TEMP/evidence/probe-checkout.json"
+      - name: Run the complete current Linux lifecycle on the original DEB
+        id: smoke
+        run: |
+          set -euo pipefail
+          test -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}"
+          docker build --file packaging/debian/smoke.Dockerfile \
+            --build-arg "UBUNTU_VERSION=$GX_UBUNTU" --tag "gx-shell-smoke:$GX_UBUNTU" packaging/debian
+          docker run --rm --volume "$PWD:/workspace:ro" --volume "$RUNNER_TEMP/evidence:/evidence" \
+            --volume "$RUNNER_TEMP/validation-inputs:/inputs:ro" \
+            --volume "$RUNNER_TEMP/sources/ohmyzsh:/sources/ohmyzsh:ro" --workdir /workspace \
+            --env GITHUB_ACTIONS --env DEBIAN_FRONTEND=noninteractive --env TZ=UTC \
+            --env GX_SMOKE_USER=gx-smoke --env GX_SMOKE_DIST=/inputs/linux --env GX_SMOKE_EVIDENCE=/evidence/lifecycle \
+            --env GX_SMOKE_PYTHON=/opt/gx-smoke-python/bin/python3.14 \
+            --env GX_SMOKE_HERDR_PROBE=/sources/ohmyzsh/scripts/gx_probe_herdr.py \
+            --env GX_SMOKE_COMPONENTS_LOCK=/inputs/components.lock.json \
+            "gx-shell-smoke:$GX_UBUNTU" bash -euo pipefail -c '
+              apt-get update
+              git config --global --add safe.directory /sources/ohmyzsh
+              useradd --create-home gx-smoke
+              bash scripts/gx_shell_smoke_linux.sh
+            '
+      - name: Bind Linux smoke evidence to source and validator identities
+        if: always()
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          set -euo pipefail
+          python scripts/gx_shell_validate_artifacts.py record --input "$RUNNER_TEMP/validation-inputs/input.json" \
+            --components-lock components.lock.json --target "ubuntu-$GX_UBUNTU" \
+            --smoke-outcome "$SMOKE_OUTCOME" --evidence "$RUNNER_TEMP/evidence/lifecycle" \
+            --output "$RUNNER_TEMP/evidence/validation-receipt.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-evidence-ubuntu-${{ matrix.ubuntu }}
+          path: |
+            ${{ runner.temp }}/evidence
+            ${{ runner.temp }}/validation-inputs/source.json
+            ${{ runner.temp }}/validation-inputs/input.json
+            ${{ runner.temp }}/validation-inputs/components.lock.json
+            ${{ runner.temp }}/validation-inputs/failure.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  smoke-windows:
+    needs: prepare
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      EXPECTED_INPUTS_DIGEST: ${{ needs.prepare.outputs.inputs_digest }}
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Require a real hosted runner and fresh evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'Windows lifecycle requires a disposable GitHub-hosted runner.'
+          }
+          New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/evidence" | Out-Null
+      - name: Download and verify original Windows package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/gx_shell_validate_artifacts.py download --source-run-id $env:SOURCE_RUN_ID `
+            --platform windows --expected-inputs-digest $env:EXPECTED_INPUTS_DIGEST `
+            --components-lock components.lock.json --output "$env:RUNNER_TEMP/validation-inputs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Checkout the original locked external probe without credentials
+        shell: pwsh
+        run: |
+          if ($env:GH_TOKEN -or $env:GITHUB_TOKEN) { throw 'Credentials must not reach the probe checkout.' }
+          python scripts/gx_shell_sources.py checkout `
+            --lock "$env:RUNNER_TEMP/validation-inputs/components.lock.json" `
+            --output "$env:RUNNER_TEMP/sources" --component ohmyzsh > "$env:RUNNER_TEMP/evidence/probe-checkout.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run the complete current Windows lifecycle on the original installer
+        id: smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GH_TOKEN -or $env:GITHUB_TOKEN) { throw 'Credentials must not reach the installer or probe.' }
+          $installers = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP/validation-inputs/windows" -Filter 'GX-Shell-*-Setup-x64.exe')
+          if ($installers.Count -ne 1) { throw 'Expected one verified original installer.' }
+          ./scripts/gx_shell_smoke_windows.ps1 -Installer $installers[0].FullName `
+            -PackageManifest ($installers[0].FullName + '.manifest.json') `
+            -ComponentsLock "$env:RUNNER_TEMP/validation-inputs/components.lock.json" `
+            -HerdrProbe "$env:RUNNER_TEMP/sources/ohmyzsh/scripts/gx_probe_herdr.py" `
+            -Evidence "$env:RUNNER_TEMP/evidence/lifecycle"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Bind Windows smoke evidence to source and validator identities
+        if: always()
+        shell: pwsh
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          python scripts/gx_shell_validate_artifacts.py record --input "$env:RUNNER_TEMP/validation-inputs/input.json" `
+            --components-lock components.lock.json --target windows --smoke-outcome $env:SMOKE_OUTCOME `
+            --evidence "$env:RUNNER_TEMP/evidence/lifecycle" --output "$env:RUNNER_TEMP/evidence/validation-receipt.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-evidence-windows
+          path: |
+            ${{ runner.temp }}/evidence
+            ${{ runner.temp }}/validation-inputs/source.json
+            ${{ runner.temp }}/validation-inputs/input.json
+            ${{ runner.temp }}/validation-inputs/components.lock.json
+            ${{ runner.temp }}/validation-inputs/failure.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  verify:
+    if: always()
+    needs: [prepare, smoke-linux, smoke-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_INPUTS_DIGEST: ${{ needs.prepare.outputs.inputs_digest }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Require both complete smoke jobs
+        shell: python
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          LINUX_RESULT: ${{ needs.smoke-linux.result }}
+          WINDOWS_RESULT: ${{ needs.smoke-windows.result }}
+          SOURCE_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          results = {name: os.environ[name] for name in ('PREPARE_RESULT', 'LINUX_RESULT', 'WINDOWS_RESULT')}
+          ready = all(value == 'success' for value in results.values())
+          receipt = {
+              'schema': 1, 'status': 'READY' if ready else 'FAIL', 'validation_only': True, 'jobs': results,
+              'source_run_id': os.environ['SOURCE_RUN_ID'], 'source_coordinator_sha': os.environ['SOURCE_SHA'],
+              'validator_sha': os.environ['GITHUB_SHA'], 'validator_run_id': os.environ['GITHUB_RUN_ID'],
+              'components_lock_digest': os.environ['SOURCE_LOCK_DIGEST'],
+          }
+          (Path(os.environ['RUNNER_TEMP']) / 'job-outcomes.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
+          if not ready:
+              raise SystemExit('Source preflight and both complete smoke jobs must succeed; no validation PASS is issued.')
+      - name: Download and verify both original platform packages
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/gx_shell_validate_artifacts.py download --source-run-id "$SOURCE_RUN_ID" \
+            --platform both --expected-inputs-digest "$EXPECTED_INPUTS_DIGEST" \
+            --components-lock components.lock.json --output "$RUNNER_TEMP/validation-inputs" --github-output
+      - uses: actions/download-artifact@v8
+        with:
+          name: validation-evidence-ubuntu-20.04
+          path: ${{ runner.temp }}/receipts/ubuntu-20.04
+      - uses: actions/download-artifact@v8
+        with:
+          name: validation-evidence-ubuntu-24.04
+          path: ${{ runner.temp }}/receipts/ubuntu-24.04
+      - uses: actions/download-artifact@v8
+        with:
+          name: validation-evidence-windows
+          path: ${{ runner.temp }}/receipts/windows
+      - name: Verify original provenance and all three current smoke receipts
+        env:
+          PACKAGE_VERSION: ${{ steps.download.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/gx_shell_package.py verify --dir "$RUNNER_TEMP/validation-inputs/dist" \
+            --version "$PACKAGE_VERSION" --sha "$SOURCE_SHA" \
+            --components-lock "$RUNNER_TEMP/validation-inputs/components.lock.json" 2>&1 | tee "$RUNNER_TEMP/verify.log"
+          python scripts/gx_shell_validate_artifacts.py aggregate --input "$RUNNER_TEMP/validation-inputs/input.json" \
+            --components-lock components.lock.json --sha "$SOURCE_SHA" --receipts "$RUNNER_TEMP/receipts" \
+            --output "$RUNNER_TEMP/validation-summary.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-summary
+          path: |
+            ${{ runner.temp }}/job-outcomes.json
+            ${{ runner.temp }}/validation-summary.json
+            ${{ runner.temp }}/verify.log
+            ${{ runner.temp }}/validation-inputs/dist/SHA256SUMS
+            ${{ runner.temp }}/validation-inputs/source.json
+            ${{ runner.temp }}/validation-inputs/input.json
+            ${{ runner.temp }}/validation-inputs/failure.json
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,5 +1,5 @@
-# 主仓只管理来源锁与整包；组件 checkout 和编译缓存放仓外，遵守各 fork 的忽略规则。
-# 根产物使用锚定规则；不要忽略 components.lock.json、packaging/ 或测试夹具。
+# 主仓只管理来源锁与整包；本地/复验的组件 checkout、编译缓存、日志和产物统一放在根仓 .local/。
+# CI 组件 checkout 可按 Git 身份契约放在 RUNNER_TEMP；不要忽略 components.lock.json、packaging/ 或测试夹具。
 /dist/
 /build/
 /stage/

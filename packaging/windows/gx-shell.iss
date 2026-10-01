@@ -1,4 +1,4 @@
-﻿; GX Shell: WezTerm GX + Oh My Zsh GX (GX Zsh) + herdr in one per-user installer.
+; GX Shell: WezTerm GX + Oh My Zsh GX (GX Zsh) + herdr in one per-user installer.
 ; Payload is assembled by scripts/gx_shell_package.py; component launchers locate
 ; their resources relative to their own executables, so the layout below is fixed.
 #ifndef GxVersion
@@ -481,7 +481,11 @@ var Busy: String;
 begin
   Busy := BusyFile(ExpandConstant('{app}'));
   Result := Busy = '';
-  if not Result then MsgBox(FmtMessage(CustomMessage('UninstallBusy'), [Busy]), mbError, MB_OK);
+  if not Result then begin
+    Log('InitializeUninstall refused: ' + Busy);
+    if not UninstallSilent then
+      SuppressibleMsgBox(FmtMessage(CustomMessage('UninstallBusy'), [Busy]), mbError, MB_OK, IDOK);
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

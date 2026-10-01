@@ -13,16 +13,19 @@
   `components[name]` 恰为 `repository`、`branch` 与完整 40 位 `revision`。仓库仍为
   `gx0404/{herdr,ohmyzsh,wezterm}`，分支分别改为既有默认分支 `feature/gx_herdr`、
   `feature/gx_ohmyzsh`、`feature/gx_wezterm`。根与组件 SHA 分别追溯，不把根 HEAD 当作组件版本。
-- 源码在仓外独立 checkout；WezTerm 递归取其自身子模块，主仓不再维护根组件源码、subtree
-  同步或根 `.gitmodules`。各 fork 负责源码、上游同步和自身测试，根负责安装器、整合与发布。
+- CI 的组件源码在 `RUNNER_TEMP` 中独立 checkout，这是与根 checkout 分离的 Git 身份边界；本地/复验的组件源码、
+  编译、构建、stage、assembly、dist、cache 和日志必须全部位于根仓 `.local/`，其中源码使用
+  `.local/sources/<component>`，运行目录使用 `.local/build/<run>`。WezTerm 递归取其自身子模块，主仓不再维护
+  根组件源码、subtree 同步或根 `.gitmodules`。各 fork 负责源码、上游同步和自身测试，根负责安装器、整合与发布。
 - 来源工具提供 `check`、固定 SHA `checkout`、显式 `update`；更新须审阅 diff，构建不追随
   浮动分支。`--require-remote` 另验 commit 存在且从各自默认分支可达；锁 digest 取原始字节。
 - 整包接口迁移到 schema 2：外部 stage → assemble → build → verify，记录锁快照/digest、
   四仓来源、构建回执与文件清单。package jobs 只消费 stage artifacts 和根打包材料；
   缺材料、来源不符、散列或布局冲突必须拒绝，不能从根组件目录悄悄补文件。接口联调仍为 PENDING。
 - 新增 Windows 本地 CPU/内存资源规划器 `scripts/gx_shell_local_build.ps1`，仅探测并输出
-  JSON/环境建议，不下载、安装或构建。组件串行共享 jobs，缓存按组件 SHA、工具链和 target
-  隔离；GPU 仅参与后续 runtime smoke。本地 `builder=local`、`--allow-dirty` 和 `-local`
+  JSON/环境建议，不下载、安装或构建。组件串行共享 jobs，缓存按组件 SHA、工具链和 target 隔离，
+  本地/复验的源码、编译、构建、stage、assembly、dist、cache 和日志统一放在根仓 `.local/`，并由
+  `.gitignore` 忽略；GPU 仅参与后续 runtime smoke。本地 `builder=local`、`--allow-dirty` 和 `-local`
   的不可发布边界不变，禁止伪造 CI 身份。
 - 已批准的验收路线：GitHub-hosted Windows 完整安装器与安装生命周期；Ubuntu GitHub runner
   上用 Docker 的 Ubuntu 20.04/24.04 容器验证同一个 DEB；本机仅对隔离的完整 payload 做硬件

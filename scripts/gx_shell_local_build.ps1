@@ -6,18 +6,28 @@ Read-only Windows local-build planning; never downloads, installs or builds.
 Use -Format Json for machine-readable output or -Format Environment for
 PowerShell process-environment assignments. Neither mode applies assignments
 or creates directories. Both (default) prints JSON followed by assignments.
-ComponentRoots maps herdr/ohmyzsh/wezterm to independent checkout roots.
-ComponentRevisions optionally pins their full commit SHAs; absent checkouts
-remain unverified. A monorepo parent HEAD is never a component revision.
-Jobs are a shared ceiling for ONE active component, not a per-component
-allocation to multiply across simultaneous builds. Memory limits are planning
-estimates, not OS-enforced quotas. Missing prerequisites set ready=false;
-invalid input exits nonzero without echoing supplied values or tool stderr.
+RepoRoot is the coordinator checkout and may contain non-ASCII characters.
+BuildRoot must resolve to a new run directory directly below
+<repo>\.local\build; when omitted, a fresh plan-<timestamp> name there is
+proposed. ComponentRoots maps herdr/ohmyzsh/wezterm to independent checkouts
+below <repo>\.local\sources; absent entries default to
+<repo>\.local\sources\<name>. ComponentRevisions optionally pins their full
+commit SHAs; absent checkouts remain unverified. A monorepo parent HEAD is
+never a component revision. Per-component cache, target, log and work
+directories stay inside the run directory, keyed by component name, pinned
+revision, toolchain fingerprint and target. Jobs are a shared ceiling for ONE
+active component, not a per-component allocation to multiply across
+simultaneous builds. Memory limits are planning estimates, not OS-enforced
+quotas. Missing prerequisites set ready=false; invalid input exits nonzero
+without echoing supplied values or tool stderr.
 .EXAMPLE
 .\scripts\gx_shell_local_build.ps1 -Format Json
 .EXAMPLE
-.\scripts\gx_shell_local_build.ps1 -Format Environment -Component herdr `
-    -ComponentRoots @{herdr='D:\src\herdr'} -Toolchain 1.96.1-x86_64-pc-windows-msvc
+$repo = 'D:\src\gx_shell'
+.\scripts\gx_shell_local_build.ps1 -Format Environment -RepoRoot $repo `
+    -BuildRoot (Join-Path $repo '.local\build\run-01') -Component herdr `
+    -ComponentRoots @{herdr=(Join-Path $repo '.local\sources\herdr')} `
+    -Toolchain 1.96.1-x86_64-pc-windows-msvc
 #>
 [CmdletBinding()]
 param(
@@ -180,17 +190,44 @@ function Get-Budget($Hardware, [string]$CpuOverride, [string]$ZshOverride, [stri
 }
 
 function Get-BuildRoot([string]$Value, [string]$Repository) {
-    if (-not $Value) { $Value = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Repository)) + 'gx-b' }
+    $base = Join-Path $Repository '.local\build'
+    if (-not $Value) {
+        $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
+        $Value = Join-Path $base ('plan-' + $stamp)
+    }
     $Value = $Value.Replace('/', '\').TrimEnd('\')
-    if ($Value.Length -gt 32 -or $Value -notmatch '^[A-Za-z]:\\[A-Za-z0-9_.-]+(?:\\[A-Za-z0-9_.-]+)*$') {
-        Fail 'GX_BUILD_ROOT must be a short absolute drive path (<=32 ASCII characters, no spaces or shell metacharacters).'
+    if ($Value -notmatch '^[A-Za-z]:\\') {
+        Fail 'BuildRoot must be an absolute drive path to a new run directory directly below the repository .local\build directory.'
     }
-    foreach ($segment in $Value.Substring(3).Split('\')) {
-        if ($segment -match '^(?:\.\.?|CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)' -or $segment.EndsWith('.')) {
-            Fail 'GX_BUILD_ROOT contains a reserved or unsafe path segment.'
-        }
+    try { $full = [IO.Path]::GetFullPath($Value) } catch {
+        Fail 'BuildRoot must be an absolute drive path to a new run directory directly below the repository .local\build directory.'
     }
-    return [IO.Path]::GetFullPath($Value)
+    if ((Split-Path -Parent $full) -ine $base) {
+        Fail 'BuildRoot must be a new run directory directly below the repository .local\build directory.'
+    }
+    $name = Split-Path -Leaf $full
+    if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$' -or $name -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$') {
+        Fail 'BuildRoot run name must be 1-32 ASCII letters, digits, underscores or hyphens, and never a reserved device name.'
+    }
+    if ([IO.Directory]::Exists($full) -or [IO.File]::Exists($full)) {
+        Fail 'BuildRoot run directory must not exist yet; choose a fresh run name for every run.'
+    }
+    return $full
+}
+
+function Get-ComponentRoot([string]$Name, [string]$Value, [string]$SourcesBase) {
+    $Value = $Value.Replace('/', '\').TrimEnd('\')
+    if ($Value -notmatch '^[A-Za-z]:\\') {
+        Fail ($Name + ': component root must be an absolute drive path below the repository .local\sources directory.')
+    }
+    try { $full = [IO.Path]::GetFullPath($Value) } catch {
+        Fail ($Name + ': component root must be an absolute drive path below the repository .local\sources directory.')
+    }
+    $prefix = $SourcesBase.TrimEnd('\') + '\'
+    if ($full.Length -le $prefix.Length -or $full.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ne 0) {
+        Fail ($Name + ': component roots must stay below the repository .local\sources directory.')
+    }
+    return $full
 }
 
 function Get-RustTools([string]$Requested, [string]$BuildTarget) {
@@ -335,15 +372,19 @@ function Get-Key([string]$Text) {
 try {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'This planner requires Windows PowerShell 5.1 or PowerShell 7 on Windows.' }
     if (-not $RepoRoot) {
-        $scriptDirectory = Split-Path -Parent $PSCommandPath
-        $RepoRoot = Split-Path -Parent $scriptDirectory
+        $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
     }
+    $RepoRoot = $RepoRoot.Replace('/', '\').TrimEnd('\')
+    if ($RepoRoot -notmatch '^[A-Za-z]:\\') { Fail 'RepoRoot must be an absolute local drive path.' }
+    try { $RepoRoot = [IO.Path]::GetFullPath($RepoRoot) } catch { Fail 'RepoRoot must be an absolute local drive path.' }
+    if (-not [IO.Directory]::Exists($RepoRoot)) { Fail 'RepoRoot must be an existing coordinator checkout.' }
     foreach ($mapping in @($ComponentRoots, $ComponentRevisions)) {
         foreach ($key in $mapping.Keys) {
             if ($key -notin @('herdr', 'ohmyzsh', 'wezterm')) { Fail 'Component mappings accept only herdr, ohmyzsh and wezterm.' }
         }
     }
     $root = Get-BuildRoot $BuildRoot $RepoRoot
+    $sourcesBase = Join-Path $RepoRoot '.local\sources'
     $hardware = Get-Hardware
     $budget = Get-Budget $hardware $env:GX_CPU_JOBS $env:GX_ZSH_JOBS $env:GX_MEMORY_BUDGET_GB
     $rust = Get-RustTools $Toolchain $Target
@@ -359,14 +400,24 @@ try {
     $components = [ordered]@{}
     $git = Find-Executable 'git.exe'
     foreach ($name in @('herdr', 'ohmyzsh', 'wezterm')) {
-        $sourceRoot = if ($ComponentRoots.ContainsKey($name)) { [string]$ComponentRoots[$name] } else { Join-Path $RepoRoot $name }
+        $sourceRoot = Join-Path $sourcesBase $name
+        if ($ComponentRoots.ContainsKey($name) -and [string]$ComponentRoots[$name]) {
+            $sourceRoot = [string]$ComponentRoots[$name]
+        }
+        $sourceRoot = Get-ComponentRoot $name $sourceRoot $sourcesBase
         $entry = Get-Component $name $sourceRoot ([string]$ComponentRevisions[$name]) $git
         if ($entry.revision) {
-            $suffix = $name + '\' + $entry.revision + '\' + $toolchainKey + '\' + $Target
-            $cache = Join-Path (Join-Path $root 'c') $suffix
-            $entry.paths = [ordered]@{ cache = $cache; work = (Join-Path (Join-Path $root 'w') $suffix)
+            $leaf = $name + '-' + (Get-Key ($entry.revision + '|' + $toolchainKey + '|' + $Target))
+            $cache = Join-Path (Join-Path $root 'c') $leaf
+            $entry.paths = [ordered]@{ cache = $cache; work = (Join-Path (Join-Path $root 'w') $leaf)
                 cargo_home = (Join-Path $cache 'cargo'); cargo_target = (Join-Path $cache 'target')
-                sccache = (Join-Path $cache 'sccache'); zsh = (Join-Path $cache 'zsh') }
+                sccache = (Join-Path $cache 'sccache'); zsh = (Join-Path $cache 'zsh')
+                logs = (Join-Path $cache 'logs') }
+            foreach ($planned in $entry.paths.Values) {
+                if ($planned.Length -gt 120) {
+                    Fail 'BuildRoot leaves too little path budget: planned per-component paths exceed 120 characters; choose a shorter run name.'
+                }
+            }
         }
         $components[$name] = $entry
     }
@@ -391,7 +442,7 @@ try {
     $warnings = @(
         'Plan only: no directories created, environment changed, dependencies installed or build executed.',
         'Serialize component builds; Cargo, native jobs and Zsh share this ceiling. Memory usage is an estimate.',
-        'Caches are proposals, not build evidence. Populate dependencies offline; create a fresh run directory below work.',
+        'Caches are proposals, not build evidence. Populate dependencies offline; every run uses a fresh directory below .local\build.',
         'Activate the MSVC/SDK environment separately. No linker or compiler is executed by this planner.',
         'ready covers selected source and Rust/MSVC planning only; package-specific dependencies and receipts remain unchecked.',
         'Optional tools are detected, not enabled, unless UseSccache/UseLld is supplied. Existing build flags are not inspected.'
@@ -410,7 +461,9 @@ try {
         ready = [bool]($rust.ready -and $tools.msvc.ready -and $selected.source_verified -and $safeLocal -and -not $budget.memory_estimated -and $memoryAvailable)
         selected_component = $Component; powershell_version = $PSVersionTable.PSVersion.ToString()
         hardware = $hardware; budget = $budget; toolchain = $rust; tools = $tools
-        paths = [ordered]@{ build_root = $root; exists = [IO.Directory]::Exists($root); toolchain_key = $toolchainKey; fingerprint = $fingerprint; components = $components }
+        paths = [ordered]@{ build_root = $root; run_name = (Split-Path -Leaf $root); repo_root = $RepoRoot
+            sources_root = $sourcesBase; exists = [IO.Directory]::Exists($root)
+            toolchain_key = $toolchainKey; fingerprint = $fingerprint; components = $components }
         environment = $environment; diagnostics = @($script:Diagnostics.ToArray()); warnings = $warnings
         gpu = 'Not probed or used for compilation; GPU validation belongs only to later WezTerm runtime smoke.' }
     if ($Format -ne 'Environment') { $report | ConvertTo-Json -Depth 12 }

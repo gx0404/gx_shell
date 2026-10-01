@@ -162,16 +162,19 @@ components.lock.json          三个 fork 的 repository / branch / revision
 packaging/                    Windows Inno Setup 7.1、Debian 模板与维护脚本
 scripts/gx_shell_sources.py   来源锁校验、固定 SHA checkout、显式更新来源
 scripts/gx_shell_local_build.ps1   Windows 只读资源与工具链规划
-scripts/gx_shell_stage_shell.sh    外部 Oh My Zsh/herdr 的 stage 编排入口
+scripts/gx_shell_stage_shell.sh    Oh My Zsh/herdr source root 的 stage 编排入口
 scripts/gx_shell_package.py   assemble / build / verify / version / notes
 scripts/gx_shell_smoke_*      两平台安装生命周期与隔离硬件 GPU 冒烟入口
 .github/workflows/release.yml 唯一的整包发布流程
 ```
 
-根工作区不含 `herdr/`、`ohmyzsh/`、`wezterm/` 组件目录。已核对的是**仓外迁移副本**：herdr、ohmyzsh
-仍检出 `gx`，wezterm 不含独立 Git 元数据；不删除这些副本。不能把迁移副本或继承的父仓 HEAD 当作正式
-组件来源。WezTerm 的 C 依赖只从其独立 checkout 的 `.gitmodules` 递归初始化。fork 的开发规则、路由器、
-测试及 workflow 留在各 fork，根仓不复制它们。
+本地/复验目录契约固定为：`.local/sources/<component>/` 保存锁定 SHA 的独立 checkout，
+`.local/build/<run>/` 保存编译工作目录、stage、assembly、dist、cache、日志、provenance 和回执；
+`.local/` 全目录已由根 `.gitignore` 忽略。根仓的受版本控制工作区不含组件目录；CI 可按 Git 身份契约把组件
+checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材料：herdr、ohmyzsh 仍检出 `gx`，wezterm
+不含独立 Git 元数据；不删除这些副本，也不能把它们或继承的父仓 HEAD 当作正式组件来源。WezTerm 的 C 依赖
+只从其独立 checkout 的 `.gitmodules` 递归初始化。fork 的开发规则、路由器、测试及 workflow 留在各 fork，
+根仓不复制它们。
 
 **组件历史边界**：本轮核对时，远端 `herdr`、`ohmyzsh`、`wezterm` 的 `gx` 相对各自默认分支分别有
 2/3/5 个独有提交，其中 herdr 两侧已分叉。正在以保留历史的合并纳入默认分支，验收后才删除 `gx`；
@@ -199,12 +202,13 @@ scripts/gx_shell_smoke_*      两平台安装生命周期与隔离硬件 GPU 冒
 真实 `components.lock.json` 已写入，不需初始化占位锁或猜测 SHA。本轮默认分支合并、来源工具与锁
 对齐后须重新校验；此前针对 `gx` 的校验只是历史证据，不能证明默认分支切换或真实产品已通过验收。
 
-在上述对齐完成后，从根仓运行以下 Git Bash 示例；`D:/gx-b/src` 是可替换的仓外短 ASCII 路径：
+在上述对齐完成后，从根仓运行以下 Git Bash 示例；本地与复验 checkout 固定在根仓 `.local/sources/<component>`，不使用
+仓外路径：
 
 ```bash
 python scripts/gx_shell_sources.py check --lock components.lock.json
 python scripts/gx_shell_sources.py check --lock components.lock.json --require-remote
-python scripts/gx_shell_sources.py checkout --lock components.lock.json --output D:/gx-b/src
+python scripts/gx_shell_sources.py checkout --lock components.lock.json --output .local/sources
 ```
 
 - `check` 离线验结构并输出 digest；`--require-remote` 另验各 SHA 是真实 commit，且从对应远端默认分支可达。
@@ -246,20 +250,25 @@ Windows 安装器仅管理 HKCU 中自己的 PATH、字体和 `Software\GX Shell
 
 `scripts/gx_shell_build.py` 是实际的本地串行构建入口：它按 `components.lock.json` checkout 独立 fork，
 先运行规划器，再按共享 jobs 预算生成 WezTerm/Oh My Zsh stage，最后调用根 `assemble/build`。它只生成
-`-local` 不可发布产物，工作目录必须是仓外的新 ASCII 路径；`--plan` 只做来源和资源检查，不编译。
+`-local` 不可发布产物；本地/复验工作目录必须是当前根仓 `.local/build/<run>`，源码必须是
+`.local/sources/<component>`，不得使用仓外路径；`--plan` 只做来源和资源检查，不编译。
 
-以下 PowerShell 示例沿用已完成的外部 checkout；工具链版本需与锁定 fork 的构建要求一致：
+以下 PowerShell 示例使用根仓内的 checkout；工具链版本需与锁定 fork 的构建要求一致：
 
 ```powershell
 $lock = Get-Content -Raw ./components.lock.json | ConvertFrom-Json
+$repo = (Get-Location).Path
+$local = Join-Path $repo '.local'
+$sources = Join-Path $local 'sources'
+$run = Join-Path $local ('build/' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $roots = @{}
 $revisions = @{}
 foreach ($name in 'herdr', 'ohmyzsh', 'wezterm') {
-    $roots[$name] = Join-Path 'D:/gx-b/src' $name
+    $roots[$name] = Join-Path $sources $name
     $revisions[$name] = $lock.components.$name.revision
 }
-./scripts/gx_shell_local_build.ps1 -Format Json -BuildRoot 'D:/gx-b' `
-    -RepoRoot (Get-Location).Path -Component wezterm `
+./scripts/gx_shell_local_build.ps1 -Format Json -BuildRoot $run `
+    -RepoRoot $repo -Component wezterm `
     -ComponentRoots $roots -ComponentRevisions $revisions `
     -Toolchain '1.96.1-x86_64-pc-windows-msvc'
 ```
@@ -267,10 +276,11 @@ foreach ($name in 'herdr', 'ohmyzsh', 'wezterm') {
 - 规划器根据物理/逻辑核心、总内存和可用内存保留系统余量；`GX_CPU_JOBS`、`GX_ZSH_JOBS`、
   `GX_MEMORY_BUDGET_GB` 可下调预算，越过安全上限会拒绝。Cargo、CMake、原生编译与 Zsh 共用预算，
   **同一时间只构建一个组件**，不能把 jobs 乘以三个；内存预算是估算，不是操作系统强制限额。
-- `GX_BUILD_ROOT` 或 `-BuildRoot` 须为不超过 32 字符的绝对盘符 ASCII 路径，无空格；每组件的缓存与工作目录
+- `GX_BUILD_ROOT` 或 `-BuildRoot` 必须解析到当前根仓 `.local/build/<run>` 下的新目录；每组件的缓存、日志和工作目录
   按组件名、完整 SHA、工具链指纹和 target 隔离。每轮使用新的输出目录，不通过删除用户源码来复用目录。
-- 显式传入外部 `ComponentRoots` 和锁中的 `ComponentRevisions`；父仓 HEAD、脏 checkout 或 SHA 不匹配
-  不算通过。`ready=true` 仅表示所选源码、Rust/MSVC 与资源规划条件满足，**不等于构建或发布通过**。
+- 本地显式传入根仓内的 `ComponentRoots` 和锁中的 `ComponentRevisions`；CI job 可按 Git 身份契约使用
+  `RUNNER_TEMP` 的独立组件 checkout。父仓 HEAD、脏 checkout 或 SHA 不匹配不算通过。`ready=true` 仅表示所选源码、
+  Rust/MSVC 与资源规划条件满足，**不等于构建或发布通过**。
 - `-UseSccache` / `-UseLld` 只在工具已安装且验证后选择；默认不启用，不自动安装。仍须单独激活 MSVC/SDK
   环境。环境建议中的离线模式要求事先准备依赖缓存，规划器不会填充缓存；不要用 `Invoke-Expression` 盲执行输出。
 - **GPU 只用于之后的 WezTerm runtime smoke**，不参与编译资源预算；检测到 GPU、规划器成功或软件渲染成功，
@@ -283,32 +293,35 @@ PowerShell 7、.NET SDK 8、Strawberry Perl 及 Inno Setup 7.1；Linux 构建与
 由 Ubuntu GitHub runner 提供，不在本机安装 Docker/WSL。具体版本以锁定 fork 的构建配置与 release workflow
 为准，缺工具先报 PENDING，不伪造 runner 或自动安装来绕过检查。
 
-WezTerm 通过外部 checkout 的 `scripts/gx_package.py` 及其 `--stage-dir` 入口产出 stage；
-根 `scripts/gx_shell_stage_shell.sh` 接受外部 Oh My Zsh/herdr source roots、锁和 jobs，生成带 provenance
-的 shell stage。`gx_shell_build.py` 将两条 stage 链串行编排，再交给根 packager；producer 的完整编译和
-一次性 runner/container 验收仍为 PENDING，不能用夹具 stage 代替真实构建。
+WezTerm 在 CI 中通过独立 checkout 的 `scripts/gx_package.py` 及其 `--stage-dir` 入口产出 stage；
+根 `scripts/gx_shell_stage_shell.sh` 接受对应的 Oh My Zsh/herdr source roots、锁和 jobs，生成带 provenance
+的 shell stage。CI 的 source roots 可以位于 `RUNNER_TEMP`；本地/复验的 source roots 只能位于
+`.local/sources/<component>`，两条 stage 链的输出、assembly、dist、cache 和日志只能位于
+`.local/build/<run>/`。`gx_shell_build.py` 将两条 stage 链串行编排，再交给根 packager；producer 的完整编译
+和一次性 runner/container 验收仍为 PENDING，不能用夹具 stage 代替真实构建。
 
-本地 herdr 构建必须使用 `GX_LOCAL_BUILD_ROOT`，记录 `builder=local`，环境不得含 `GH_TOKEN` /
-`GITHUB_TOKEN` 或伪造的 CI 身份。本地 stage 只允许 `assemble --allow-dirty`；产物名带 `-local`，
-永远不可发布，不能通过改 manifest 标记将它提升为正式包。
+本地 herdr 构建必须使用位于根仓 `.local/build/<run>` 下的 `GX_LOCAL_BUILD_ROOT`，记录 `builder=local`，
+环境不得含 `GH_TOKEN` / `GITHUB_TOKEN` 或伪造的 CI 身份。本地 stage 只允许 `assemble --allow-dirty`；产物名带
+`-local`，永远不可发布，不能通过改 manifest 标记将它提升为正式包。
 
 若另行需要本地构建诊断，可使用以下 Windows 入口，`--plan` 仅验证资源和来源。本轮产品验收按下节路线
-执行，本机仅做隔离完整 payload 的硬件 GPU/窗口验证，不以本地编译替代 runner 构建：
+执行，本机仅做隔离完整 payload 的硬件 GPU/窗口验证，不以本地编译替代 runner 构建。命令从根仓运行，且所有
+本地/复验路径都在 `.local/` 内；`<run>` 每轮必须替换为新的运行目录名：
 
 ```powershell
 python scripts/gx_shell_build.py --platform windows --components-lock components.lock.json `
-  --work-root D:/gx-b/run --sources-root D:/gx-b/src --jobs 8 --memory-budget-gb 12 --plan
+  --work-root .local/build/<run> --sources-root .local/sources --jobs 8 --memory-budget-gb 12 --plan
 python scripts/gx_shell_build.py --platform windows --components-lock components.lock.json `
-  --work-root D:/gx-b/run --sources-root D:/gx-b/src --jobs 8 --memory-budget-gb 12
+  --work-root .local/build/<run> --sources-root .local/sources --jobs 8 --memory-budget-gb 12
 ```
 
-也可以在已有两个 stage 时直接组装；assembly 与输出目录必须为新的目录：
+也可以在已有两个 stage 时直接组装；stage、assembly 和输出目录必须是根仓 `.local/build/<run>` 下的新目录：
 
 ```bash
 python scripts/gx_shell_package.py assemble --platform windows --allow-dirty \
-  --components-lock components.lock.json --wezterm-stage D:/gx-b/run/wezterm-stage \
-  --ohmyzsh-stage D:/gx-b/run/ohmyzsh-stage --output D:/gx-b/run/assembly
-python scripts/gx_shell_package.py build --assembly D:/gx-b/run/assembly --output D:/gx-b/run/dist
+  --components-lock components.lock.json --wezterm-stage .local/build/<run>/wezterm-stage \
+  --ohmyzsh-stage .local/build/<run>/ohmyzsh-stage --output .local/build/<run>/assembly
+python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly --output .local/build/<run>/dist
 ```
 
 根 packager 离线消费 stage、锁和根安装器材料，不再从组件源码补图标、指纹或许可。schema 2 manifest

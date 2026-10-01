@@ -46,9 +46,11 @@ def main():
     coordinator = Path(sys.argv[1])
     parser = argparse.ArgumentParser(
         prog='gx_shell_stage_shell.sh',
-        description='Stage external pinned checkouts; never infer component paths from the coordinator.',
-        epilog='Local: set GX_LOCAL_BUILD_ROOT to an existing short ASCII directory. '
-               'Work-root must be new, external, at most 80 ASCII characters, and contain no spaces. '
+        description='Stage pinned Oh My Zsh/herdr checkouts; never infer component paths from the coordinator.',
+        epilog='Local: GX_LOCAL_BUILD_ROOT must name the coordinator .local/build/<run> directory, work-root '
+               'must be a new child of it, and the Oh My Zsh/herdr roots must live under the coordinator '
+               '.local/sources. CI release builds instead use independent checkouts under RUNNER_TEMP; that Git '
+               'identity boundary never relaxes the local path rule. '
                'The original platform/work-root positional arguments are retained; all source options are mandatory. '
                'Local stages are never publishable; root assemble must use --allow-dirty.')
     parser.add_argument('platform', choices=('windows-x64', 'ubuntu-amd64'))
@@ -85,8 +87,6 @@ def main():
                     'coordinator, Oh My Zsh and herdr must be separate, non-nested Git checkouts')
         require(not work.is_relative_to(root) and not root.is_relative_to(work),
                 'work-root must be outside every source checkout and cannot contain one')
-    require(len(str(work)) <= 80 and re.fullmatch(r'[A-Za-z0-9_./:\\-]+', str(work)) is not None,
-            'work-root must be a short ASCII path (<=80 characters, no spaces or shell metacharacters)')
     require(not work.exists(), 'work-root already exists; choose a fresh path, never reuse build/cache/stage outputs')
     require(not lock_path.is_relative_to(work), 'components lock must not be inside the new work-root')
     require(lock_path.is_file(), '--components-lock must name an existing complete lock; no production lock is generated')
@@ -100,6 +100,20 @@ def main():
     if local:
         require(os.environ.get('GITHUB_ACTIONS') != 'true', 'GX_LOCAL_BUILD_ROOT cannot be used on GitHub Actions')
         boundary = sources._safe_path(Path(os.environ['GX_LOCAL_BUILD_ROOT']))
+        build_root = sources._safe_path(coordinator / '.local' / 'build')
+        sources_root = sources._safe_path(coordinator / '.local' / 'sources')
+        require(boundary != build_root and boundary.is_relative_to(build_root),
+                'GX_LOCAL_BUILD_ROOT must be the coordinator .local/build/<run> directory')
+        require(work.parent == boundary,
+                'local work-root must be a new child of GX_LOCAL_BUILD_ROOT (.local/build/<run>)')
+        require(all(root != sources_root and root.is_relative_to(sources_root) for root in (omz, herdr)),
+                'local Oh My Zsh/herdr checkouts must be independent directories under the coordinator .local/sources')
+        for candidate, label in ((boundary, 'GX_LOCAL_BUILD_ROOT'), (work, 'work-root')):
+            relative = candidate.relative_to(coordinator)
+            require(len(str(relative)) <= 80
+                    and all(re.fullmatch(r'[A-Za-z0-9_.-]+', part) for part in relative.parts),
+                    f'{label} must stay a short ASCII path below the coordinator (<=80 characters, no spaces)')
+        require(len(str(work)) <= 200, 'work-root absolute path is too long; choose a shorter run name')
     else:
         require(os.environ.get('GITHUB_ACTIONS') == 'true'
                 and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
@@ -110,9 +124,10 @@ def main():
         boundary = sources._safe_path(Path(os.environ['RUNNER_TEMP']))
         require(all(root != boundary and root.is_relative_to(boundary) for root in (omz, herdr)),
                 'CI component checkouts must be independent directories under RUNNER_TEMP')
+        require(work.parent == boundary, 'CI work-root must be a new child of RUNNER_TEMP')
+        require(len(str(work)) <= 80 and re.fullmatch(r'[A-Za-z0-9_./:\\-]+', str(work)) is not None,
+                'CI work-root must be a short ASCII path (<=80 characters, no spaces or shell metacharacters)')
     require(boundary.is_dir(), 'GX_LOCAL_BUILD_ROOT/RUNNER_TEMP must be an existing directory')
-    require(work != boundary and work.is_relative_to(boundary),
-            'work-root must be a new child of GX_LOCAL_BUILD_ROOT/RUNNER_TEMP')
     require((os.name == 'nt') == (args.platform == 'windows-x64'), 'builder OS and target platform differ')
     if args.platform == 'ubuntu-amd64':
         require(Path('/usr/share/keyrings/ubuntu-archive-keyring.gpg').is_file(),
@@ -145,7 +160,7 @@ def main():
     producer_files = ('gx_dependencies.py', 'gx_build_herdr.py', 'gx_release.py', 'gx_build_zsh.py', 'gx_package.py')
     for name in producer_files:
         path = sources._safe_path(scripts / name)
-        require(path.is_file(), f'missing external producer: {path}')
+        require(path.is_file(), f'missing pinned producer: {path}')
     sys.path.insert(0, str(scripts))
     import gx_dependencies as deps
     import gx_release as release

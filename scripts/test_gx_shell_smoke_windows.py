@@ -347,5 +347,160 @@ foreach($name in $baseline.Keys){
         self.assertNotIn('Write-Host "Screenshot unavailable', text)
 
 
+@unittest.skipUnless(os.name == 'nt' and PWSH, 'Windows PowerShell process-tree fixtures')
+class InstallerProcessTreeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='gx-installer-tree-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.fixture = self.root / 'fixture.py'
+        self.fixture.write_text('''import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+mode, directory = sys.argv[1:]
+root = Path(directory)
+if mode in ('tree', 'hang'):
+    child = subprocess.Popen([sys.executable, __file__, 'middle' if mode == 'hang' else 'leaf', directory], creationflags=subprocess.CREATE_NO_WINDOW)
+    (root / 'child.pid').write_text(str(child.pid))
+    (root / 'root-exiting').write_text(str(os.getpid()))
+    sys.exit(0)
+if mode == 'middle':
+    child = subprocess.Popen([sys.executable, __file__, 'leaf-hang', directory], creationflags=subprocess.CREATE_NO_WINDOW)
+    (root / 'grandchild.pid').write_text(str(child.pid))
+    time.sleep(60)
+if mode == 'leaf-hang':
+    time.sleep(60)
+if mode == 'leaf':
+    time.sleep(1.5)
+    (root / 'child-completed').write_text('done')
+if mode == 'exit7':
+    sys.exit(7)
+''', encoding='utf-8')
+
+    def run_powershell(self, body, mode='tree'):
+        bootstrap = r'''
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$tokens=$null; $errors=$null
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:GX_TREE_SCRIPT,[ref]$tokens,[ref]$errors)
+if($errors.Count){ throw ($errors | Out-String) }
+$names=@('Initialize-SetupJob','Invoke-OwnedProcessTree','Run-Setup')
+foreach($f in $ast.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst]},$true)){
+    if($f.Name -in $names){ . ([scriptblock]::Create($f.Extent.Text)) }
+}
+$Evidence=$env:GX_TREE_OUTPUT
+'''
+        # pwsh -Command exits 1 when $Error still holds a record at end of script, even a caught one;
+        # append an explicit exit 0 for bodies that complete. An unhandled throw exits 1 before it.
+        return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', bootstrap + body + '\nexit 0\n'],
+                              env=dict(os.environ, GX_TREE_SCRIPT=str(LIFECYCLE), GX_TREE_OUTPUT=str(self.root),
+                                       GX_TREE_EXE=sys.executable,
+                                       GX_TREE_ARGUMENTS=subprocess.list2cmdline([str(self.fixture), mode, str(self.root)])),
+                              capture_output=True, text=True, timeout=35)
+
+    def test_waits_for_child_after_bootstrap_exits(self):
+        result = self.run_powershell("$r=Invoke-OwnedProcessTree $env:GX_TREE_EXE $env:GX_TREE_ARGUMENTS 'child-wait' 8; if($r.ExitCode -ne 0){throw 'unexpected exit'}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.root / 'root-exiting').exists())
+        self.assertTrue((self.root / 'child-completed').exists())
+        receipt = json.loads((self.root / 'child-wait-process.json').read_text(encoding='utf-8-sig'))
+        self.assertEqual(receipt['status'], 'EXITED')
+        self.assertGreaterEqual(receipt['total_processes'], 2)
+        self.assertGreaterEqual(receipt['elapsed_seconds'], 1.4)
+        self.assertTrue(receipt['cleanup_complete'])
+        self.assertEqual(receipt['remaining_process_ids'], [])
+
+    def test_timeout_terminates_only_owned_child_and_grandchild(self):
+        outsider = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            result = self.run_powershell("Invoke-OwnedProcessTree $env:GX_TREE_EXE $env:GX_TREE_ARGUMENTS 'timeout' 3", 'hang')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('not an occupied-file refusal', result.stdout + result.stderr)
+            receipt = json.loads((self.root / 'timeout-process.json').read_text(encoding='utf-8-sig'))
+            self.assertEqual(receipt['status'], 'TIMEOUT')
+            self.assertTrue(receipt['cleanup_complete'])
+            self.assertGreaterEqual(receipt['total_processes'], 3)
+            self.assertGreaterEqual(len(receipt['timeout_process_ids']), 2)
+            self.assertEqual(receipt['remaining_process_ids'], [])
+            self.assertNotIn(outsider.pid, receipt['timeout_process_ids'], 'job diagnostics must stay inside the owned tree')
+            self.assertLess(receipt['elapsed_seconds'], 15)
+            self.assertIsNone(outsider.poll(), 'the unrelated fixture must survive job termination')
+        finally:
+            outsider.terminate()
+            outsider.wait(timeout=10)
+
+    def test_nonzero_exit_is_returned_without_becoming_timeout(self):
+        result = self.run_powershell("$r=Invoke-OwnedProcessTree $env:GX_TREE_EXE $env:GX_TREE_ARGUMENTS 'refused' 5; if($r.ExitCode -ne 7){throw 'lost exit code'}", 'exit7')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        receipt = json.loads((self.root / 'refused-process.json').read_text(encoding='utf-8-sig'))
+        self.assertEqual(receipt['status'], 'EXITED')
+        self.assertEqual(receipt['exit_code'], 7)
+        self.assertTrue(receipt['cleanup_complete'])
+        self.assertEqual(receipt['remaining_process_ids'], [], 'a refused run must not leave owned processes behind')
+
+    def test_refusal_wrapper_does_not_swallow_timeout(self):
+        result = self.run_powershell(r'''
+function Invoke-OwnedProcessTree { throw [TimeoutException]::new('fixture timeout') }
+$accepted=$false
+try { Run-Setup 'fixture-only.exe' 'expected-refusal' -ExpectRefusal; $accepted=$true }
+catch { if($_ -notmatch 'fixture timeout'){throw} }
+if($accepted){ throw 'timeout was accepted as refusal' }
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_all_installer_calls_use_deadlines_and_job_cleanup(self):
+        text = LIFECYCLE.read_text(encoding='utf-8')
+        self.assertNotRegex(text, r'Start-Process[^\n]*-Wait')
+        self.assertIn('Run-Setup $case.File $case.Label -Seconds 45 -ExpectRefusal', text)
+        self.assertIn("'an in-use refusal removed installed entry points'", text)
+        self.assertIn("'an in-use refusal changed the runtime file'", text)
+        self.assertIn("Run-Setup (Join-Path $app 'unins000.exe') $Label -Seconds 180", text)
+        self.assertIn('AssignProcessToJobObject(job, root)', text)
+        self.assertLess(text.index('AssignProcessToJobObject(job, root)'), text.index('ResumeThread(process.Thread)'))
+        self.assertIn('limits.Basic.Flags = 0x2000', text)
+
+
+class InstallerSilentRefusalTests(unittest.TestCase):
+    def test_silent_refusal_preserves_interactive_warning_and_busy_check(self):
+        text = (ROOT / 'packaging/windows/gx-shell.iss').read_text(encoding='utf-8')
+        block = text.split('function InitializeUninstall: Boolean;', 1)[1].split('procedure CurUninstallStepChanged', 1)[0]
+        self.assertIn("Busy := BusyFile(ExpandConstant('{app}'))", block)
+        self.assertIn("Result := Busy = ''", block)
+        self.assertIn("Log('InitializeUninstall refused: ' + Busy)", block)
+        self.assertIn('if not UninstallSilent then', block)
+        self.assertIn('SuppressibleMsgBox', block)
+        self.assertIn('mbError, MB_OK, IDOK', block)
+        self.assertNotRegex(block, r'(?<!Suppressible)MsgBox\(')
+        self.assertNotIn('TerminateProcess', text)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Inno Setup compilation')
+    def test_inno_71_compiles_fixture_without_installing(self):
+        try:
+            compiler = package.tool('iscc', None)
+        except package.PackageError as error:
+            self.skipTest(str(error))
+        version = subprocess.run([compiler, '--version'], capture_output=True, text=True, timeout=15)
+        self.assertEqual(version.returncode, 0, version.stdout + version.stderr)
+        self.assertRegex(version.stdout.strip(), r'^7\.1\.')
+        with tempfile.TemporaryDirectory(prefix='gx-inno-compile-only-') as directory:
+            root = Path(directory)
+            payload = root / 'payload'
+            payload.mkdir()
+            (payload / 'fixture.txt').write_text('COMPILE ONLY - NEVER INSTALL', encoding='utf-8')
+            dib = struct.pack('<IIIHHIIIIII', 40, 16, 32, 1, 32, 0, 1024, 0, 0, 0, 0)
+            image = dib + bytes((32, 80, 128, 255)) * 256 + bytes(64)
+            icon = struct.pack('<HHHBBBBHHII', 0, 1, 1, 16, 16, 0, 0, 1, 32, len(image), 22) + image
+            (root / 'fixture.ico').write_bytes(icon)
+            result = subprocess.run([compiler, '/Q', '/DGxVersion=0.0.0', f'/DGxPayload={payload}',
+                                     f'/DGxOutput={root / "output"}', '/DGxFilename=compile-only-never-install',
+                                     f'/DGxIcon={root / "fixture.ico"}', str(ROOT / 'packaging/windows/gx-shell.iss')],
+                                    capture_output=True, text=True, errors='replace', timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertGreater((root / 'output/compile-only-never-install.exe').stat().st_size, 1000)
+
+
 if __name__ == '__main__':
     unittest.main()
