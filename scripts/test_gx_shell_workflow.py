@@ -55,8 +55,25 @@ class ValidationWorkflowTests(unittest.TestCase):
         self.assertIn('runs-on: windows-2025', windows)
         self.assertIn('tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}', windows)
         self.assertIn('cargo nextest run --locked -p config -p mux -p wezterm-gui --no-fail-fast --test-threads 2', windows)
-        self.assertIn("python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'", windows)
-        self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', windows)
+        coordinator = "python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'"
+        self.assertNotIn(coordinator, windows)
+        package = self.job('package-windows')
+        ordered = (
+            'name: Install checksum-pinned Inno Setup',
+            '$installed = Start-Process -FilePath $installer',
+            'if ($installed.ExitCode -ne 0) { throw "Inno Setup failed: $($installed.ExitCode)" }',
+            "\"ISCC=$(Join-Path $destination 'ISCC.exe')\" >> $env:GITHUB_ENV",
+            'name: Coordinator tests with pinned Inno Setup',
+            coordinator,
+            'name: Assemble and build the GX Shell installer',
+            'python scripts/gx_shell_package.py assemble --platform windows',
+            'python scripts/gx_shell_package.py build --assembly',
+        )
+        for before, after in zip(ordered, ordered[1:]):
+            with self.subTest(before=before, after=after):
+                self.assertLess(package.index(before), package.index(after))
+        self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+                      package[package.index(coordinator):package.index(ordered[6])])
 
     def test_runtime_payload_is_archived_only_after_lifecycle(self):
         package = self.job('package-windows')

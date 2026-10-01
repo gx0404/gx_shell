@@ -7,6 +7,7 @@ import re
 import shutil
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -25,6 +26,17 @@ def write(path: Path, data: bytes = b"fixture", executable: bool = False) -> Non
     path.write_bytes(data)
     if executable:
         path.chmod(0o755)
+
+
+def cleanup_temp(directory: tempfile.TemporaryDirectory) -> None:
+    for attempt in range(30):
+        try:
+            directory.cleanup()
+            return
+        except OSError as error:
+            if os.name != "nt" or getattr(error, "winerror", None) not in (32, 145) or attempt == 29:
+                raise
+            time.sleep(0.1)
 
 
 def write_lock(root: Path) -> Path:
@@ -105,8 +117,8 @@ def ohmyzsh_stage(root: Path, platform: str, font: bytes = b"shared font", **ove
     info = {"schema_version": 1, "platform": package.PLATFORMS[platform]["ohmyzsh"], "version": "0.2.0",
             "source": {"repository": "gx0404/ohmyzsh", "revision": OMZ_SHA, "dirty": False}, "publishable": True,
             "compliance_complete": True, "lock_digest": "d" * 64,
-            "herdr": {"repository": "gx0404/herdr", "revision": HERDR_SHA, "version": "0.9.1"},
-            "herdr_build": {"repository": "gx0404/herdr", "revision": HERDR_SHA, "version": "0.9.1",
+            "herdr": {"repository": "https://github.com/gx0404/herdr", "revision": HERDR_SHA, "version": "0.9.1"},
+            "herdr_build": {"repository": "https://github.com/gx0404/herdr", "revision": HERDR_SHA, "version": "0.9.1",
                             "package_manager": identity, "target": "fixture", "source_sha256": "e" * 64,
                             "builder": "github-actions"},
             "zsh_build": {"version": "5.9.2+gx-metafied-paths"}}
@@ -151,10 +163,91 @@ def ohmyzsh_stage(root: Path, platform: str, font: bytes = b"shared font", **ove
     return stage
 
 
+class CleanupTempTests(unittest.TestCase):
+    def test_success_does_not_retry_or_sleep(self):
+        for os_name in ("nt", "posix"):
+            with self.subTest(os_name=os_name):
+                directory = mock.Mock(spec=tempfile.TemporaryDirectory)
+                with mock.patch.object(os, "name", os_name), mock.patch.object(time, "sleep") as sleep:
+                    self.assertIsNone(cleanup_temp(directory))
+                directory.cleanup.assert_called_once_with()
+                sleep.assert_not_called()
+
+    def test_transient_windows_errors_are_retried(self):
+        for winerror in (32, 145):
+            with self.subTest(winerror=winerror):
+                error = OSError("temporary cleanup failure")
+                error.winerror = winerror
+                directory = mock.Mock(spec=tempfile.TemporaryDirectory)
+                directory.cleanup.side_effect = [error, error, None]
+                with mock.patch.object(os, "name", "nt"), mock.patch.object(time, "sleep") as sleep:
+                    self.assertIsNone(cleanup_temp(directory))
+                self.assertEqual(directory.cleanup.call_args_list, [mock.call()] * 3)
+                self.assertEqual(sleep.call_args_list, [mock.call(0.1)] * 2)
+
+    def test_persistent_windows_errors_raise_after_the_retry_limit(self):
+        for winerror in (32, 145):
+            with self.subTest(winerror=winerror):
+                error = OSError("persistent cleanup failure")
+                error.winerror = winerror
+                directory = mock.Mock(spec=tempfile.TemporaryDirectory)
+                directory.cleanup.side_effect = error
+                with mock.patch.object(os, "name", "nt"), mock.patch.object(time, "sleep") as sleep:
+                    with self.assertRaises(OSError) as raised:
+                        cleanup_temp(directory)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(directory.cleanup.call_args_list, [mock.call()] * 30)
+                self.assertEqual(sleep.call_args_list, [mock.call(0.1)] * 29)
+
+    def test_non_windows_errors_are_not_retried(self):
+        for winerror in (32, 145):
+            with self.subTest(winerror=winerror):
+                error = OSError("cleanup failure outside Windows")
+                error.winerror = winerror
+                directory = mock.Mock(spec=tempfile.TemporaryDirectory)
+                directory.cleanup.side_effect = error
+                with mock.patch.object(os, "name", "posix"), mock.patch.object(time, "sleep") as sleep:
+                    with self.assertRaises(OSError) as raised:
+                        cleanup_temp(directory)
+                self.assertIs(raised.exception, error)
+                directory.cleanup.assert_called_once_with()
+                sleep.assert_not_called()
+
+    def test_other_errors_are_not_retried(self):
+        denied = PermissionError("access denied")
+        denied.winerror = 5
+        for os_name in ("nt", "posix"):
+            for error in (denied, OSError("no winerror"), RuntimeError("unexpected failure")):
+                with self.subTest(os_name=os_name, error=error):
+                    directory = mock.Mock(spec=tempfile.TemporaryDirectory)
+                    directory.cleanup.side_effect = error
+                    with mock.patch.object(os, "name", os_name), mock.patch.object(time, "sleep") as sleep:
+                        with self.assertRaises(type(error)) as raised:
+                            cleanup_temp(directory)
+                    self.assertIs(raised.exception, error)
+                    directory.cleanup.assert_called_once_with()
+                    sleep.assert_not_called()
+
+    def test_other_error_after_a_transient_failure_stops_retrying(self):
+        for winerror in (32, 145):
+            with self.subTest(winerror=winerror):
+                transient = OSError("temporary cleanup failure")
+                transient.winerror = winerror
+                error = OSError("nonretryable cleanup failure")
+                directory = mock.Mock(spec=tempfile.TemporaryDirectory)
+                directory.cleanup.side_effect = [transient, error, None]
+                with mock.patch.object(os, "name", "nt"), mock.patch.object(time, "sleep") as sleep:
+                    with self.assertRaises(OSError) as raised:
+                        cleanup_temp(directory)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(directory.cleanup.call_args_list, [mock.call()] * 2)
+                sleep.assert_called_once_with(0.1)
+
+
 class AssemblyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="gx-shell-unit-")
-        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(cleanup_temp, self.temp)
         self.root = Path(self.temp.name)
         self.coordinator = self.root / "coordinator"
         self.lock = write_lock(self.coordinator)
@@ -232,6 +325,12 @@ class AssemblyTests(unittest.TestCase):
             ({}, {"herdr": {"revision": OMZ_SHA}}, "locked commit"),
             ({}, {"herdr_build": {"revision": OMZ_SHA}}, "locked commit"),
             ({}, {"herdr_build": {"repository": "gx0404/ohmyzsh"}}, "different repository"),
+            ({}, {"herdr": {"repository": "gx0404/herdr"}}, "different repository"),
+            ({}, {"herdr_build": {"repository": "gx0404/herdr"}}, "different repository"),
+            ({}, {"herdr": {"repository": "gx0404/herdr"},
+                  "herdr_build": {"repository": "gx0404/herdr"}}, "different repository"),
+            ({}, {"herdr": {"repository": "https://github.com/other/herdr"},
+                  "herdr_build": {"repository": "https://github.com/other/herdr"}}, "different repository"),
             ({}, {"herdr_build": {"source_sha256": None}}, "source SHA-256"),
             ({}, {"herdr_build": {"builder": "local"}}, "not built on GitHub Actions"),
             ({}, {"herdr_build": {"builder": None}}, "not built on GitHub Actions"),
@@ -568,7 +667,7 @@ class AssemblyTests(unittest.TestCase):
 
         def iscc(argv, env=None):
             options = dict(str(item)[2:].split("=", 1) for item in argv if str(item).startswith("/DGx"))
-            self.assertEqual(Path(options["GxIcon"]), assembly / "build-inputs/terminal.ico")
+            self.assertTrue(os.path.samefile(Path(options["GxIcon"]), assembly / "build-inputs/terminal.ico"))
             self.assertEqual(Path(options["GxIcon"]).read_bytes(), b"fixture-stage-icon")
             write(Path(options["GxOutput"]) / f"{options['GxFilename']}.exe", b"fixture installer")
 
@@ -710,7 +809,7 @@ class AssemblyTests(unittest.TestCase):
 class ReleaseVerificationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="gx-shell-release-")
-        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(cleanup_temp, self.temp)
         self.dir = Path(self.temp.name)
         self.lock = write_lock(self.dir / "coordinator")
         patcher = mock.patch.object(package, "ROOT", self.lock.parent)
@@ -727,8 +826,8 @@ class ReleaseVerificationTests(unittest.TestCase):
                    "source_repository": "gx0404/wezterm", "source_commit": WEZTERM_SHA, "source_dirty": False}
         ohmyzsh = {"schema_version": 1, "platform": package.PLATFORMS[platform]["ohmyzsh"],
                    "source": {"repository": "gx0404/ohmyzsh", "revision": OMZ_SHA, "dirty": False},
-                   "herdr": {"repository": "gx0404/herdr", "revision": HERDR_SHA},
-                   "herdr_build": {"repository": "gx0404/herdr", "revision": HERDR_SHA,
+                   "herdr": {"repository": "https://github.com/gx0404/herdr", "revision": HERDR_SHA},
+                   "herdr_build": {"repository": "https://github.com/gx0404/herdr", "revision": HERDR_SHA,
                                    "source_sha256": "e" * 64, "builder": "local" if local else "github-actions",
                                    "package_manager": package.PLATFORMS[platform]["herdr"]},
                    "publishable": not local, "compliance_complete": True}

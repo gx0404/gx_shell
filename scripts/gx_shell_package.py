@@ -290,7 +290,7 @@ def check_ohmyzsh_origin(info: dict, platform: str, sha: str, herdr_sha: str, al
     require(allow_dirty or (info["publishable"] and source["dirty"] is False and not source.get("development", False)),
             "Oh My Zsh stage is a development (dirty) build")
     require(info.get("compliance_complete") is True, "Oh My Zsh stage lacks complete redistribution material")
-    require(herdr.get("repository") == build.get("repository") == "gx0404/herdr",
+    require(herdr.get("repository") == build.get("repository") == "https://github.com/gx0404/herdr",
             "herdr has a different repository")
     require(herdr.get("revision") == herdr_sha and build.get("revision") == herdr_sha,
             "herdr was not built from the locked commit")

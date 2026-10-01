@@ -250,11 +250,6 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.18.0
-      - name: Coordinator tests on Windows
-        shell: pwsh
-        run: |
-          python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}
@@ -573,6 +568,11 @@ jobs:
           $installed = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$destination`"" -Wait -PassThru
           if ($installed.ExitCode -ne 0) { throw "Inno Setup failed: $($installed.ExitCode)" }
           "ISCC=$(Join-Path $destination 'ISCC.exe')" >> $env:GITHUB_ENV
+      - name: Coordinator tests with pinned Inno Setup
+        shell: pwsh
+        run: |
+          python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate coordinator lock without component checkouts
         shell: python
         env:
