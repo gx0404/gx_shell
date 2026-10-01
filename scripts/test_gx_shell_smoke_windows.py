@@ -305,7 +305,7 @@ Assert-MapSame $before (UserData-State) 'same'
 Set-Content (Join-Path $profile '.zshrc.local') 'corrupted'
 $caught=$false; try { Assert-MapSame $before (UserData-State) 'changed' } catch { $caught=$true }
 if(-not $caught){ throw 'changed profile accepted' }
-Remove-Item (Join-Path $profile '.zshrc.local')
+Remove-Item -Force (Join-Path $profile '.zshrc.local')
 $caught=$false; try { Assert-MapSame $before (UserData-State) 'missing' } catch { $caught=$true }
 if(-not $caught){ throw 'missing profile accepted' }
 $baseline=@{'user-path-entries'='["%USERPROFILE%/tools"]'; 'font:third-party'='original font'; 'shortcut:third-party'='original hash'}
