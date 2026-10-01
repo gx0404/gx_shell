@@ -10,9 +10,9 @@
 WezTerm 默认直接进入 GX Zsh（可以在设置里换成 PowerShell、WSL 等，见「默认 Shell」），herdr 可以在 GX Zsh 里运行，
 也可以从 WezTerm 启动菜单打开。
 
-**迁移中**：源码、上游同步和组件测试归各 fork，主仓只锁定 `gx` 完整 SHA 并负责安装器、整合与发布。
-真实锁与外部构建链尚待验收，见「来源锁与更新」「验收与 PENDING」。旧 Release 资产已按迁移决定退出
-下载/验收输入；本文保留既有使用与配置保护说明，但不宣称迁移后的构建或旧版升级已通过测试。
+**迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
+真实 `components.lock.json` 已存在；默认分支切换与外部构建链仍待验收，见「来源锁与更新」「验收与 PENDING」。
+旧 Release 资产已退出下载/验收输入；既有使用与配置保护说明不代表本轮真实产品验收或旧版升级已通过。
 
 ## 安装
 
@@ -153,7 +153,7 @@ Ubuntu 上选系统 Zsh 时，herdr 改用 GX Zsh（herdr 里的 zsh 本来也�
 | 仓库 | 负责范围 | 整合方式 |
 |---|---|---|
 | `gx0404/gx_shell` | 安装布局、安装器、来源锁、stage 整合、冒烟与发布 | 根 coordinator commit + 锁文件 |
-| `gx0404/herdr` | herdr 源码、上游同步、自身测试与包身份 | 锁定 `gx` commit，由 shell 构建链消费 |
+| `gx0404/herdr` | herdr 源码、上游同步、自身测试与包身份 | 锁定默认分支的完整 SHA，由 shell 构建链消费 |
 | `gx0404/ohmyzsh` | GX Zsh 配置、启动器、Zsh/MSYS2、依赖再分发与自身测试 | 外部 source root 生成 shell stage |
 | `gx0404/wezterm` | WezTerm 源码、配置、启动器、配置指纹与自身测试 | 外部 checkout 递归取其子模块，生成 WezTerm stage |
 
@@ -164,29 +164,42 @@ scripts/gx_shell_sources.py   来源锁校验、固定 SHA checkout、显式更�
 scripts/gx_shell_local_build.ps1   Windows 只读资源与工具链规划
 scripts/gx_shell_stage_shell.sh    外部 Oh My Zsh/herdr 的 stage 编排入口
 scripts/gx_shell_package.py   assemble / build / verify / version / notes
-scripts/gx_shell_smoke_*      两平台一次性环境冒烟
+scripts/gx_shell_smoke_*      两平台安装生命周期与隔离硬件 GPU 冒烟入口
 .github/workflows/release.yml 唯一的整包发布流程
 ```
 
-上表是迁移后的职责边界。根工作区不再包含三个组件目录或根 `.gitmodules`，也不能用
-`git -C herdr rev-parse HEAD` 等迁移遗留路径冒充组件 SHA。WezTerm 的 C 依赖只从其独立 checkout
-中的 `.gitmodules` 递归初始化。fork 的开发规则、路由器、测试及 workflow 留在各 fork，根仓不复制它们。
+根工作区不含 `herdr/`、`ohmyzsh/`、`wezterm/` 组件目录。已核对的是**仓外迁移副本**：herdr、ohmyzsh
+仍检出 `gx`，wezterm 不含独立 Git 元数据；不删除这些副本。不能把迁移副本或继承的父仓 HEAD 当作正式
+组件来源。WezTerm 的 C 依赖只从其独立 checkout 的 `.gitmodules` 递归初始化。fork 的开发规则、路由器、
+测试及 workflow 留在各 fork，根仓不复制它们。
 
-**历史边界**：最终协调仓以一个**无父初始化 commit** 建立新历史，不再继承旧 subtree 合并历史；
-组件历史留在各 fork。当前文档迁移不执行历史重建、不删除组件目录、不改变 refs。无父初始化及清理的实际
-完成状态仍需迁移操作者验证，不能因为文档已更新就宣称当前 HEAD 已无父提交。
+**组件历史边界**：本轮核对时，远端 `herdr`、`ohmyzsh`、`wezterm` 的 `gx` 相对各自默认分支分别有
+2/3/5 个独有提交，其中 herdr 两侧已分叉。正在以保留历史的合并纳入默认分支，验收后才删除 `gx`；
+不重写 fork 历史，不提前清理 refs，不删除仓外迁移副本。本次文档编辑不执行合并、分支删除或推送。
+
+**根协调仓历史重建（独立 PENDING）**：仍保留未来以**无父初始化 commit** 建立根协调仓新历史、
+不继承旧 subtree 合并历史的迁移计划。它与组件默认分支切换及 `gx` 删除是独立事项，未被取消，也不在
+本轮执行范围；须在代码与两平台验收完成后另行授权、单独执行和验证，不能据此宣称当前 HEAD 已完成重建。
 
 ### 来源锁与更新
 
 `components.lock.json` 的 `schema` 为 `1`；`components` 恰有 `herdr`、`ohmyzsh`、`wezterm`，
-每项恰有 `repository`（`gx0404/<name>`）、`branch`（固定 `gx`）和 `revision`（完整 40 位 commit SHA）。
+每项恰有 `repository`（`gx0404/<name>`）、`branch` 和 `revision`（完整 40 位 commit SHA）。
+`branch` 改为各自既有默认分支，不再统一使用 `gx`：
+
+| repository | branch |
+|---|---|
+| `gx0404/herdr` | `feature/gx_herdr` |
+| `gx0404/ohmyzsh` | `feature/gx_ohmyzsh` |
+| `gx0404/wezterm` | `feature/gx_wezterm` |
+
 根 coordinator SHA 与三组件 SHA 分别记录，不能再拿一个根提交代表四个仓库。锁 digest 是文件**原始字节**
 的 SHA-256；换行或 JSON 格式变化也会改变它，不在锁内写自引用 digest。
 
-截至 2026-10-01 的迁移检查，herdr 与 Oh My Zsh 的 `gx` 已可从远端读取；WezTerm 候选尚未最终锁定，
-真实 `components.lock.json` 尚未写入。下面命令只在完整锁已审阅并存在之后执行；文档不生成占位锁或猜测 SHA。
+真实 `components.lock.json` 已写入，不需初始化占位锁或猜测 SHA。本轮默认分支合并、来源工具与锁
+对齐后须重新校验；此前针对 `gx` 的校验只是历史证据，不能证明默认分支切换或真实产品已通过验收。
 
-在根仓运行以下 Git Bash 示例；`D:/gx-b/src` 是可替换的仓外短 ASCII 路径，不是本机固定配置：
+在上述对齐完成后，从根仓运行以下 Git Bash 示例；`D:/gx-b/src` 是可替换的仓外短 ASCII 路径：
 
 ```bash
 python scripts/gx_shell_sources.py check --lock components.lock.json
@@ -194,13 +207,13 @@ python scripts/gx_shell_sources.py check --lock components.lock.json --require-r
 python scripts/gx_shell_sources.py checkout --lock components.lock.json --output D:/gx-b/src
 ```
 
-- `check` 离线验结构并输出 digest；`--require-remote` 另验各 SHA 是真实 commit，且是远端 `gx` 的祖先。
-- `checkout` 按锁定 SHA 建立独立、detached、干净的 checkout，不追随当前 `gx` 头；WezTerm 递归取子模块。
+- `check` 离线验结构并输出 digest；`--require-remote` 另验各 SHA 是真实 commit，且从对应远端默认分支可达。
+- `checkout` 按锁定 SHA 建立独立、detached、干净的 checkout，不追随任何浮动分支头；WezTerm 递归取子模块。
   已有目录必须身份、SHA 与干净状态均匹配，否则拒绝覆盖。不能把开发中的 fork 工作区当作可清空的缓存。
 - 完整 checkout 已在本地时可加 `--offline` 复用；缺 clone 或递归子模块会失败，不偷偷联网。
 
-更新来源时，先在相应 fork 完成改动、上游同步与自身测试，推送获准的 `gx` 提交，再由根仓审阅来源锁。
-只有明确要将**三个组件都更新到各自当前 `gx` 头**，且已有完整锁时，才运行：
+更新来源时，先在相应 fork 完成改动、上游同步与自身测试，推送获准的默认分支提交，再由根仓审阅来源锁。
+只有明确要将**三个组件都更新到各自当前默认分支头**，且已有完整锁时，才运行：
 
 ```bash
 python scripts/gx_shell_sources.py update --lock components.lock.json
@@ -217,10 +230,11 @@ python scripts/gx_shell_sources.py check --lock components.lock.json --require-r
 外置源码不改变安装契约：Windows 保持 `{app}\bin`、`lib`、`runtime\msys64`、`share\ohmyzsh-gx`、
 `fonts` 和 `{app}\wezterm\`；deb 保持 `/usr/lib/{ohmyzsh-gx,wezterm-gx}` 与
 `/usr/share/{ohmyzsh-gx,wezterm-gx}`。布局变更须同步两个 fork 的启动器、WezTerm fork 中的
-`dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager 与两份冒烟脚本，并更新来源锁。
+`dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager、安装生命周期与硬件 GPU 冒烟入口，并更新来源锁。
 
 Windows 安装器仅管理 HKCU 中自己的 PATH、字体和 `Software\GX Shell`；文件被占用时拒绝继续，
-不杀进程。deb 维护脚本不写用户 HOME。真实安装/卸载仅在一次性 runner 或容器执行，不在开发机运行冒烟脚本。
+不杀进程。deb 维护脚本不写用户 HOME。真实安装/卸载仅在一次性 runner 或容器执行；开发机不运行安装
+生命周期冒烟，只验证隔离的完整 payload 的硬件 GPU/窗口，具体边界见「验收与 PENDING」。
 
 ## Windows 本地构建
 
@@ -265,8 +279,9 @@ foreach ($name in 'herdr', 'ohmyzsh', 'wezterm') {
 ### stage 与整包
 
 真实构建仍需 Python 3.14（含 zstd 支持）、fork 要求的 Rust MSVC 工具链、VS Build Tools/Windows SDK、
-PowerShell 7、.NET SDK 8、Strawberry Perl 及 Inno Setup 7.1；Linux 构建与冒烟还需 Docker 和相应容器工具链。
-具体版本以锁定 fork 的构建配置与 release workflow 为准，缺工具先报 PENDING，不伪造 runner 或自动安装来绕过检查。
+PowerShell 7、.NET SDK 8、Strawberry Perl 及 Inno Setup 7.1；Linux 构建与冒烟所需的 Docker 和容器工具链
+由 Ubuntu GitHub runner 提供，不在本机安装 Docker/WSL。具体版本以锁定 fork 的构建配置与 release workflow
+为准，缺工具先报 PENDING，不伪造 runner 或自动安装来绕过检查。
 
 WezTerm 通过外部 checkout 的 `scripts/gx_package.py` 及其 `--stage-dir` 入口产出 stage；
 根 `scripts/gx_shell_stage_shell.sh` 接受外部 Oh My Zsh/herdr source roots、锁和 jobs，生成带 provenance
@@ -277,7 +292,8 @@ WezTerm 通过外部 checkout 的 `scripts/gx_package.py` 及其 `--stage-dir` �
 `GITHUB_TOKEN` 或伪造的 CI 身份。本地 stage 只允许 `assemble --allow-dirty`；产物名带 `-local`，
 永远不可发布，不能通过改 manifest 标记将它提升为正式包。
 
-推荐使用一键本地入口（Windows；当前主机可先用 `--plan` 验证资源和来源）：
+若另行需要本地构建诊断，可使用以下 Windows 入口，`--plan` 仅验证资源和来源。本轮产品验收按下节路线
+执行，本机仅做隔离完整 payload 的硬件 GPU/窗口验证，不以本地编译替代 runner 构建：
 
 ```powershell
 python scripts/gx_shell_build.py --platform windows --components-lock components.lock.json `
@@ -304,14 +320,15 @@ python scripts/gx_shell_package.py build --assembly D:/gx-b/run/assembly --outpu
 
 迁移后的发布必须遵循以下门禁；这些是验收要求，**不是本次已成功运行 CI 的声明**：
 
-1. 完成真实锁及三个可达的 `gx` 提交、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
-   digest、仓库/分支/revision、commit 存在与 `gx` 可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
+1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
+   digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
 2. 根与组件分别 checkout，组件放 `RUNNER_TEMP`；WezTerm 递归取自身子模块。build/test jobs 使用外部
    source roots；package jobs 只消费 stage artifacts 与根打包代码，不需要根组件目录或旧指纹 commit fetch。
 3. 保留 Windows/Linux 构建、根及组件单测、真实 Zsh/PTY、原生启动器、WezTerm config/mux/GUI nextest、
-   Inno Setup 7.1 编译，以及一次性 Windows runner 和 Ubuntu 20.04/24.04 容器的安装—使用—卸载冒烟、
-   同版本重装和配置保护检查。**无旧 Release 升级覆盖**：旧资产已按迁移决定退出输入，不再下载旧安装包，
-   不把 warning skip 或同版本重装写成旧版升级通过；旧版替换/跨版本升级未验证。
+   Inno Setup 7.1 编译。完整安装生命周期走 GitHub-hosted Windows，以及 Ubuntu GitHub runner 上的
+   Docker Ubuntu 20.04/24.04 容器；后两者验证同一个 DEB。保留安装—使用—卸载、同版本重装和配置保护检查，
+   硬件 GPU/窗口另按下节隔离验收。**无旧 Release 升级覆盖**：不下载旧安装包，不把 warning skip 或
+   同版本重装写成旧版升级通过；旧版替换/跨版本升级未验证。
 4. 两平台产物均完成后，由根 `verify` 核对共同 coordinator SHA、锁/digest、组件来源与文件散列，
    生成 `SHA256SUMS`。仅发布门禁认可的干净 CI stage 可以发布，local 永远不行。
 5. 新版本标题使用 `## X.Y.Z(YYYY-MM-DD)`；`(TBD)` 会阻止发布。tag 必须为同版本 `gx-shell-vX.Y.Z`，
@@ -339,27 +356,43 @@ Windows 在根目录可运行
 独立 checkout 和资源预算，但不编译、不安装。按本机执行策略运行，不更改系统策略。已有 actionlint 时运行
 `actionlint .github/workflows/release.yml`；缺工具明确记录，不为文档验收临时安装。
 
-**当前验证快照**：`python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'` 运行 **101 项，全部通过，
-跳过 7 项**；`actionlint .github/workflows/release.yml` 通过；`components.lock.json` 的
-`sources check --require-remote` 已确认三个 fork 的 `gx` SHA 存在且满足 ancestry。根测试和锁校验通过
-不等于真实组件编译、安装、GPU runtime 或发布通过。
+### 已批准的实测路线
+
+以下均为目标，**本轮尚无真实产品验收结果**：
+
+1. **GitHub-hosted Windows**：生成完整 payload，用 Inno Setup 7.1 编译安装器，再以
+   `scripts/gx_shell_smoke_windows.ps1` 验证安装、使用、同版本重装、配置保护与卸载。
+2. **Ubuntu GitHub runner**：完成 Linux 构建，以 `scripts/gx_shell_smoke_linux.sh` 在 Docker 的
+   Ubuntu 20.04 和 24.04 容器验证**同一个 DEB** 的安装生命周期；不在本机安装 Docker 或 WSL。
+3. **本机硬件 GPU/窗口**：新增入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 尚未实测。目标是对隔离的
+   **完整 payload** 使用独立工作目录和配置做真实硬件 GPU/窗口检查，不运行安装器，不改现有用户配置、
+   HKCU PATH 或字体。记录实际渲染适配器与窗口运行证据；不能只探测显卡或启动单个二进制就判定通过。
+
+CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速。无 GPU 的 runner 可以验证软件 fallback
+路径，但软件渲染不经过目标硬件 GPU/驱动，不能替代本机硬件 GPU 证据；本机窗口成功也不替代安装器生命周期。
+
+### 本轮快照与当前待验证项
+
+**本轮已运行的根检查**：`python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'` 运行 **152 项，145 项通过，7 项跳过**；`actionlint .github/workflows/release.yml`、`bash -n scripts/gx_shell_smoke_linux.sh`、`git diff --check` 和默认分支锁的 `sources check --require-remote` 均通过。三个 fork 已完成默认分支合并：herdr 的 CI run `36850119403` 全绿；Oh My Zsh 的来源身份更新已推送，但完整 package 测试仍有缺少 zsh 的环境 error；WezTerm 仍需随最终根产物执行整包构建。根检查和 fork CI 不等于真实整包构建、安装生命周期或 GPU runtime 通过。
+
 
 | 项目 | 当前验收边界 |
 |---|---|
-| 根测试 / planner 默认入口 | PASS：101 项通过，7 项按平台能力跳过；PowerShell 5.1/7 规划器与脚本文件默认根路径已覆盖 |
-| 真实来源锁、三个 `gx`、WezTerm stage producer | 来源锁和三个远端 SHA/ancestry PASS；WezTerm schema 2 producer 已提交并推送，真实 stage 编译 PENDING |
-| 外部 source adapter / stage / workflow | adapter、smoke 静态/夹具检查 PASS；两平台真实 stage、PTY、安装生命周期和完整 CI PENDING |
-| Rust/MSVC/SDK、Python、Perl、.NET | 版本门与来源锁检查已运行；真实 herdr/Zsh/WezTerm 编译 PENDING |
-| sccache / 可选 LLD | 当前未检出；启用及实际构建验收 PENDING，默认不启用 |
-| Inno Setup 7.1 | 本机已发现 ISCC；完整 GX Shell payload 的 7.1 编译与一次性安装/卸载 PENDING |
-| Docker / Linux 工具链 | 当前主机未发现 Docker；Ubuntu 基线构建、DEB 与 20.04/24.04 容器冒烟 PENDING |
-| zsh / PTY / nextest | 主机 PATH 未发现 zsh；获锁 fork 的真实运行时和 nextest 验收 PENDING |
-| GPU / 窗口与安装运行时 | PENDING：只在最终 runtime smoke 验证，不是编译加速项 |
-| 无父初始化与远端历史清理 | PENDING：必须在代码/双平台验收完成后执行，不能提前删除旧 refs |
+| 根测试 / planner / workflow 静态检查 | PASS：根测试 152 项（145 通过、7 跳过）；actionlint、Linux shell syntax、diff check 通过；真实产品仍待 CI |
+| 真实来源锁与默认分支 | PASS：herdr `b6a27411f73f26ca4483b6b4134e1ed694be2aa3`、ohmyzsh `333f4390747a28e83179903f928ff8e29bdeafad`、wezterm `4b219eea6a46eab9de03444612b90766d1d0d806`；lock digest `9ea7c96db823580861ce3c6655327fb6439d49fc12213c6d4461191107237d6a`，远端可达性通过 |
+| 外部 source adapter / stage / workflow | PENDING：根 release workflow 尚未运行；herdr fork CI run `36850119403` 全绿，Oh My Zsh 完整 package 门仍受本机 zsh 缺失阻塞 |
+| Rust/MSVC/SDK、Python、Perl、.NET | PENDING：锁定 fork 的真实整包构建仍待根 release workflow |
+| sccache / 可选 LLD | 默认不启用；如需启用，先验证已有工具，不自动安装 |
+| Inno Setup 7.1 | PENDING：GitHub-hosted Windows 上完整 payload 的安装器编译与生命周期 |
+| Docker / Linux 工具链 | PENDING：Ubuntu GitHub runner 构建与同一 DEB 的 20.04/24.04 容器验收；不在本机安装 Docker/WSL |
+| zsh / PTY / nextest | PENDING：根整包获锁 fork 的真实运行时和 nextest 验收；herdr fork CI 已覆盖其自身门 |
+| 硬件 GPU / 窗口 | BLOCKED：WezTerm 原生 KnownFolders 路径尚未提供安全隔离契约；新入口只会拒绝执行，不以软件 fallback 代替硬件 GPU |
+| 默认分支迁移与 `gx` 清理 | PENDING：保留独有提交及 fork 历史，整包与 GPU 验收后才删除 `gx`；不删除仓外迁移副本 |
+| 根协调仓无父初始化 commit | 独立 PENDING：原迁移计划保留；不在本轮执行范围，须在代码与两平台验收完成后另行授权、单独执行和验证 |
 | 旧 Release 升级 | 不覆盖：旧资产退出验收输入，不报告为通过或 warning skip 后成功 |
 
 出现失败先保留日志、lock digest 与 stage 回执，区分工具缺失、来源不符和测试失败。不要清空用户 checkout、
-伪造 CI 环境或降低发布门禁。迁移尚未完成，本文没有宣称外置架构构建、CI 或安装冒烟已通过。
+伪造 CI 环境或降低发布门禁。迁移尚未完成，最终实测结果仍待回填，本文不宣称外置架构构建、CI 或安装冒烟已通过。
 
 ## 许可
 

@@ -157,8 +157,11 @@ function Config-Files([string]$Root) {
 }
 function Assert([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Owned-Fonts {
-    $key = Get-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-    return @($key.GetValueNames() | Where-Object { $_ -like 'GXShell *' })
+    $path = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $key = Get-Item -LiteralPath $path
+    try { return @($key.GetValueNames() | Where-Object { $expectedFontKeys.ContainsKey($_) }) }
+    finally { $key.Dispose() }
 }
 function Owned-PathEntries {
     $bin = Join-Path $app 'bin'
@@ -231,16 +234,19 @@ function Assert-HerdrConfig([string]$Label, [string]$LocalAppData) {
 # A starting GX Zsh keeps forking MSYS2 children, so one pass can miss some; the installer then (correctly)
 # refuses because msys-2.0.dll is in use. Repeat until nothing from the installation has run for a second.
 function Stop-Installation {
+    Assert ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted') 'process cleanup is hosted-runner only'
     $quiet = 0
     $running = @()
+    $prefix = $app.TrimEnd('\') + '\'
     for ($i = 0; $i -lt 60 -and $quiet -lt 2; $i++) {
-        $running = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($app, [StringComparison]::OrdinalIgnoreCase) })
+        $running = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
         if ($running.Count) { $quiet = 0; $running | Stop-Process -Force -ErrorAction SilentlyContinue } else { $quiet++ }
         Start-Sleep -Milliseconds 500
     }
     Assert ($quiet -ge 2) "processes from $app keep running: $(@($running | ForEach-Object { $_.Path }) -join ', ')"
 }
 function Run-Uninstall([string]$Label) {
+    $userBefore = UserData-State
     Run-Setup (Join-Path $app 'unins000.exe') $Label
     for ($i = 0; $i -lt 120 -and (Test-Path -LiteralPath $app); $i++) { Start-Sleep -Milliseconds 500 }
     $left = @(Get-ChildItem -LiteralPath $app -Recurse -Force -Name -ErrorAction SilentlyContinue | Select-Object -First 50)
@@ -248,18 +254,29 @@ function Run-Uninstall([string]$Label) {
     Assert (@(Owned-PathEntries).Count -eq 0) 'owned PATH entry remains'
     Assert (@(Owned-Fonts).Count -eq 0) 'owned font registrations remain'
     Assert (-not (Test-Path -LiteralPath 'HKCU:\Software\GX Shell')) 'ownership registry key remains'
-    Assert (Test-Path -LiteralPath (Join-Path $config 'gx-shell-preserve-marker.lua')) 'WezTerm user configuration was removed'
-    Assert (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'ohmyzsh-gx\profile')) 'GX Zsh profile was removed'
+    Assert (-not (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\wezterm-gx.exe')) 'App Paths registration remains'
+    foreach ($path in $ownedShortcuts) { Assert (-not (Test-Path -LiteralPath $path)) "owned shortcut remains: $path" }
+    Assert-UserData $userBefore $Label
+    Assert-NonOwnedState $Label
 }
 function Save-Screenshot([string]$Name) {
+    $bitmap = $null
+    $graphics = $null
     try {
         Add-Type -AssemblyName System.Windows.Forms, System.Drawing
         $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        Assert ($bounds.Width -ge 320 -and $bounds.Height -ge 200) 'no usable desktop for screenshot'
         $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
-        [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-        $bitmap.Save((Join-Path $Evidence $Name), [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $path = Join-Path $Evidence $Name
+        $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+        Assert ((Get-Item -LiteralPath $path).Length -gt 0) 'empty screenshot'
     } catch {
-        Write-Host "Screenshot unavailable: $_"
+        throw "Screenshot failed ($Name): $_"
+    } finally {
+        if ($graphics) { $graphics.Dispose() }
+        if ($bitmap) { $bitmap.Dispose() }
     }
 }
 function Save-GuiDiagnostics([string]$Label) {
@@ -273,6 +290,139 @@ function Save-GuiDiagnostics([string]$Label) {
     Get-ChildItem -Path (Join-Path $env:USERPROFILE '.local\share\wezterm\*-log-*.txt') -ErrorAction SilentlyContinue |
         Copy-Item -Destination $logs
 }
+function Assert-MapSame([hashtable]$Before, [hashtable]$After, [string]$Label) {
+    Assert ($Before.Count -eq $After.Count) "${Label}: file/value set changed"
+    foreach ($name in $Before.Keys) {
+        Assert ($After.ContainsKey($name) -and $After[$name] -ceq $Before[$name]) "${Label}: changed or missing $name"
+    }
+}
+function Registry-Values([string]$Path, [string[]]$Names = @()) {
+    $values = @{}
+    if (Test-Path -LiteralPath $Path) {
+        $key = Get-Item -LiteralPath $Path
+        try {
+            $available = @($key.GetValueNames())
+            $selected = if ($Names.Count) { $Names } else { $available }
+            foreach ($name in $selected) {
+                if ($name -notin $available) { continue }
+                $values[$name] = [ordered]@{ Kind = $key.GetValueKind($name).ToString(); Value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } | ConvertTo-Json -Compress
+            }
+        } finally { $key.Dispose() }
+    }
+    return $values
+}
+function NonOwned-State {
+    $state = @{}
+    $userValues = Registry-Values 'HKCU:\Environment' @('Path')
+    $userPath = if ($userValues.ContainsKey('Path')) { ($userValues['Path'] | ConvertFrom-Json).Value } else { '' }
+    $entries = @($userPath -split ';' | Where-Object { $_ -ne '' -and $_.Trim().Trim('"').TrimEnd('\') -ine (Join-Path $app 'bin') })
+    $state['user-path-entries'] = ConvertTo-Json -InputObject $entries -Compress
+    $machineValues = Registry-Values 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' @('Path')
+    $state['machine-path'] = $machineValues['Path']
+    foreach ($entry in (Registry-Values 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts').GetEnumerator()) {
+        if (-not $expectedFontKeys.ContainsKey($entry.Key)) { $state['font:' + $entry.Key] = $entry.Value }
+    }
+    $fontFolder = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    if (Test-Path -LiteralPath $fontFolder) {
+        foreach ($entry in (Config-Files $fontFolder).GetEnumerator()) { $state['font-file:' + $entry.Key] = $entry.Value }
+    }
+    foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('DesktopDirectory'))) {
+        foreach ($file in Get-ChildItem -LiteralPath $folder -Recurse -File -Force) {
+            if ($file.Extension -notin '.lnk', '.url' -or $ownedShortcuts -contains $file.FullName) { continue }
+            if ($LegacyInstaller -and $file.FullName -ieq (Join-Path $folder 'WezTerm (gx).lnk')) { continue }
+            $state['shortcut:' + $file.FullName] = (Get-FileHash -LiteralPath $file.FullName).Hash
+        }
+    }
+    return $state
+}
+function Assert-NonOwnedState([string]$Label) {
+    $after = NonOwned-State
+    $after | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Evidence "$Label-nonowned.json") -Encoding utf8
+    Assert-MapSame $hostBaseline $after "${Label}: non-owned PATH/font/shortcut baseline"
+}
+function UserData-State {
+    $state = @{}
+    foreach ($entry in (Config-Files $config).GetEnumerator()) { $state['wezterm/' + $entry.Key] = $entry.Value }
+    foreach ($entry in (Config-Files $profile).GetEnumerator()) { $state['profile/' + $entry.Key] = $entry.Value }
+    return $state
+}
+function Assert-UserData([hashtable]$Before, [string]$Label) {
+    $after = UserData-State
+    @{ Before = $Before; After = $after } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Evidence "$Label-user-data.json") -Encoding utf8
+    Assert-MapSame $Before $after "${Label}: configuration and full GX profile contents"
+}
+function Assert-InstalledState([string]$Label) {
+    Assert (@(Owned-PathEntries).Count -eq 1) "${Label}: expected exactly one owned PATH entry"
+    Assert ((Get-ItemProperty -LiteralPath 'HKCU:\Software\GX Shell').InstallDir -ieq $app) "${Label}: ownership directory changed"
+    $fontKey = Get-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    $ownerKey = Get-Item -LiteralPath 'HKCU:\Software\GX Shell\Fonts'
+    try {
+        Assert (@($ownerKey.GetValueNames()).Count -eq $expectedFontKeys.Count) "${Label}: font ownership set differs"
+        foreach ($name in $expectedFontKeys.Keys) {
+            $record = $expectedFontKeys[$name]
+            $path = Join-Path $app ("fonts/" + $record.Name)
+            Assert ($fontKey.GetValue($name) -ceq $path -and $ownerKey.GetValue($name) -ceq $path) "${Label}: font registration changed: $name"
+            Assert ((Get-FileHash -LiteralPath $path).Hash -ieq $record.Sha256) "${Label}: font bytes differ: $name"
+        }
+    } finally { $fontKey.Dispose(); $ownerKey.Dispose() }
+    Assert-GxZshShortcut
+    $linkPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'WezTerm GX.lnk'
+    Assert (Test-Path -LiteralPath $linkPath -PathType Leaf) "${Label}: WezTerm shortcut missing"
+    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($linkPath)
+    Assert ($link.TargetPath -ieq (Join-Path $app 'wezterm\wezterm-gx.exe') -and $link.Arguments -eq '') "${Label}: WezTerm shortcut changed"
+    $registered = (Get-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\wezterm-gx.exe').GetValue('')
+    Assert ($registered -ieq $link.TargetPath) "${Label}: App Paths registration changed"
+    Assert (-not (Test-Path -LiteralPath $ownedShortcuts[2])) "${Label}: unchecked desktop shortcut was created"
+    Assert-NonOwnedState $Label
+}
+function Runtime-Recheck([string]$Label) {
+    Refresh-Path
+    foreach ($name in 'gx-zsh', 'herdr') {
+        $resolved = (Get-Command $name -CommandType Application | Select-Object -First 1).Source
+        Assert ($resolved -ieq (Join-Path $app "bin/$name.exe")) "${Label}: $name resolves outside installation"
+    }
+    Assert-InstalledState $Label
+    $shell = Capture-Bounded "$Label-zsh.txt" (Join-Path $app 'bin/gx-zsh.exe') @('-c',
+        'print -r -- "GX_RECHECK zsh=$ZSH_VERSION omz=$ZSH"; print -r -- "profile=$GX_PROFILE_DIR"; print -r -- "user=${GX_SMOKE_PRESERVE-unset}"') 180
+    Assert ($shell.Code -eq 0 -and $shell.Text -match 'GX_RECHECK zsh=5\.9\.2 omz=\S*/share/ohmyzsh-gx' -and $shell.Text -match 'user=gx-user-data-kept') "${Label}: GX Zsh or preserved user layer did not run"
+    Assert-HerdrConfig $Label $env:LOCALAPPDATA
+    $version = Capture-Bounded "$Label-herdr.txt" (Join-Path $app 'bin/herdr.exe') @('--version') 60
+    Assert ($version.Code -eq 0 -and $version.Text.Trim() -ceq $smokeProvenance.expected_herdr_version) "${Label}: herdr identity differs"
+    $init = Capture-Bounded "$Label-wezterm-init.txt" $cli @('--gx-initialize-only') 180
+    Assert ($init.Code -eq 0) "${Label}: WezTerm initialization failed"
+    $fonts = Capture-Bounded "$Label-fonts.txt" (Join-Path $app 'wezterm/wezterm.exe') @('ls-fonts') 120
+    Assert ($fonts.Code -eq 0 -and $fonts.Text -match 'JetBrainsMono Nerd Font' -and $fonts.Text -match 'Noto Sans CJK SC' -and
+        $fonts.Text -notmatch 'Unable to load a font|plugin load failed|Error loading configuration|Failed to require') "${Label}: WezTerm configuration/fonts failed"
+    Run-HostedGuiWindow $Label
+    $protectedAfter = @{}
+    foreach ($path in $protectedUserFiles.Keys) { $protectedAfter[$path] = (Get-FileHash -LiteralPath $path).Hash }
+    Assert-MapSame $protectedUserFiles $protectedAfter "${Label}: runtime changed protected user files"
+    Assert-NonOwnedState "$Label-runtime"
+}
+$expectedFontKeys = @{}
+foreach ($item in @($smokeProvenance.stages.wezterm.files) + @($smokeProvenance.stages.ohmyzsh.payload)) {
+    if ($item.path -match '^fonts/([^/]+\.(ttf|ttc))$') {
+        $name = $Matches[1]
+        $key = "GXShell $name (TrueType)"
+        if ($expectedFontKeys.ContainsKey($key)) { Assert ($expectedFontKeys[$key].Sha256 -ceq $item.sha256) "Conflicting font receipt: $name" }
+        $expectedFontKeys[$key] = @{ Name = $name; Sha256 = $item.sha256 }
+    }
+}
+Assert ($expectedFontKeys.Count -eq 8) 'stage receipts do not describe the eight expected Windows fonts'
+$ownedShortcuts = @(
+    (Join-Path ([Environment]::GetFolderPath('Programs')) 'WezTerm GX.lnk'),
+    (Join-Path ([Environment]::GetFolderPath('Programs')) 'GX Zsh.lnk'),
+    (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'WezTerm GX.lnk')
+)
+foreach ($path in $ownedShortcuts) { Assert (-not (Test-Path -LiteralPath $path)) "Refusing to overwrite pre-existing shortcut: $path" }
+Assert (-not (Test-Path -LiteralPath 'HKCU:\Software\GX Shell')) 'pre-existing ownership registry key'
+Assert (-not (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\wezterm-gx.exe')) 'pre-existing GX App Paths registration'
+$existingFonts = Registry-Values 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+foreach ($name in $expectedFontKeys.Keys) { Assert (-not $existingFonts.ContainsKey($name)) "pre-existing owned font name: $name" }
+$hostBaseline = NonOwned-State
+$hostBaseline | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $Evidence 'before-install-nonowned.json') -Encoding utf8
+$profile = Join-Path $env:LOCALAPPDATA 'ohmyzsh-gx\profile'
+
 $legacyKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{734DC47D-4799-46A6-A286-4A64B802370A}_is1'
 $legacyApp = Join-Path $env:LOCALAPPDATA 'Programs\WezTerm GX'
 $legacyLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'WezTerm (gx).lnk'
@@ -435,33 +585,40 @@ function Find-GuiShell {
     }
     return $null
 }
-function Fail-Gui([string]$Message) {
-    Save-GuiDiagnostics 'gui'
-    Save-Screenshot 'windows-failed.png'
-    throw "$Message; see gui-processes.txt, gui-wezterm-logs and windows-failed.png"
+function Fail-Gui([string]$Message, [string]$Label) {
+    Save-GuiDiagnostics $Label
+    Save-Screenshot "$Label-failed.png"
+    throw "${Label}: $Message; see $Label-processes.txt, $Label-wezterm-logs and $Label-failed.png"
 }
-# Hosted runners have no GPU: Windows' OpenGL 1.1 is too old for WezTerm, and the bundled Mesa cannot load
-# because wezterm-gui already imports the system opengl32.dll. Render with WebGPU on the WARP adapter instead.
-Start-Process -FilePath (Join-Path $app 'wezterm\wezterm-gx.exe') `
-    -ArgumentList '--config', "front_end='WebGpu'", '--config', 'webgpu_force_fallback_adapter=true' | Out-Null
-$started = $null
-for ($i = 0; $i -lt 120 -and -not $started; $i++) {
-    Start-Sleep -Milliseconds 500
-    $started = Find-GuiShell
+function Run-HostedGuiWindow([string]$Label) {
+    Assert ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted') 'software GUI smoke is hosted-runner only'
+    Assert (-not (Find-GuiShell)) 'refusing to reuse an existing GX GUI shell'
+    # Software rendering on hosted runners is not hardware GPU or desktop-input acceptance.
+    Start-Process -FilePath (Join-Path $app 'wezterm\wezterm-gx.exe') `
+        -ArgumentList '--config', "front_end='WebGpu'", '--config', 'webgpu_force_fallback_adapter=true' | Out-Null
+    $started = $null
+    for ($i = 0; $i -lt 120 -and -not $started; $i++) {
+        Start-Sleep -Milliseconds 500
+        $started = Find-GuiShell
+    }
+    if (-not $started) { Fail-Gui 'WezTerm did not start the bundled GX Zsh (wezterm-gui -> gx-zsh -> zsh) within 60 s' $Label }
+    Start-Sleep -Seconds 5
+    $running = Find-GuiShell
+    if (-not $running -or $running.Shell -ne $started.Shell) { Fail-Gui "GX Zsh (pid $($started.Shell)) did not keep running under WezTerm" $Label }
+    $window = $null
+    for ($i = 0; $i -lt 20 -and -not $window; $i++) {
+        $window = Get-Process -Id $started.Gui -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero }
+        if (-not $window) { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $window) { Fail-Gui "wezterm-gui (pid $($started.Gui)) shows no visible window" $Label }
+    Save-GuiDiagnostics $Label
+    Save-Screenshot "$Label-windows.png"
+    @{ status = 'EVIDENCE_READY'; gui_pid = $started.Gui; shell_pid = $started.Shell; renderer = 'WebGpu software fallback';
+        images_reviewed = $false; desktop_input_echo_redraw = 'NOT_RUN'; hardware_gpu = 'NOT_RUN' } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Evidence "$Label-window.json") -Encoding utf8
+    Stop-Installation
 }
-if (-not $started) { Fail-Gui 'WezTerm did not start the bundled GX Zsh (wezterm-gui -> gx-zsh -> zsh) within 60 s' }
-Start-Sleep -Seconds 5
-$running = Find-GuiShell
-if (-not $running -or $running.Shell -ne $started.Shell) { Fail-Gui "GX Zsh (pid $($started.Shell)) did not keep running under WezTerm" }
-$window = $null
-for ($i = 0; $i -lt 20 -and -not $window; $i++) {
-    $window = Get-Process -Id $started.Gui -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero }
-    if (-not $window) { Start-Sleep -Milliseconds 500 }
-}
-if (-not $window) { Fail-Gui "wezterm-gui (pid $($started.Gui)) shows no visible window" }
-Save-GuiDiagnostics 'gui'
-Save-Screenshot 'windows.png'
-Stop-Installation
+Run-HostedGuiWindow 'install'
 
 Step 'install and uninstall refuse an occupied runtime file without removing the installation'
 $occupied = Join-Path $app 'runtime\msys64\usr\bin\msys-2.0.dll'
@@ -479,27 +636,33 @@ try {
 } finally { $handle.Dispose() }
 Assert ((Get-FileHash -LiteralPath $occupied).Hash -ceq $occupiedHash) 'an in-use refusal changed the runtime file'
 
-Step 'same-version reinstall keeps user configuration, one PATH entry, the fonts and the directory'
+Step 'same-version reinstall preserves configuration and full GX profile contents'
+Assert-InstalledState 'before-reinstall'
 Set-Content -LiteralPath (Join-Path $config 'gx-shell-preserve-marker.lua') -Value '-- preserved' -Encoding utf8
-$beforeReinstall = Config-Files $config
-Run-Setup $Installer 'reinstall'
-$afterReinstall = Config-Files $config
-Assert ($beforeReinstall.Count -eq $afterReinstall.Count) 'reinstall changed the user configuration file set'
-foreach ($name in $beforeReinstall.Keys) {
-    Assert ($afterReinstall.ContainsKey($name) -and $afterReinstall[$name] -ceq $beforeReinstall[$name]) "reinstall changed user configuration: $name"
+Set-Content -LiteralPath (Join-Path $profile 'gx-shell-preserve-marker.txt') -Value 'user profile data: 中文' -Encoding utf8
+Add-Content -LiteralPath (Join-Path $profile '.zshrc.local') -Value "`nexport GX_SMOKE_PRESERVE=gx-user-data-kept" -Encoding utf8
+$settings = Join-Path $config 'gui-settings.json'
+if (-not (Test-Path -LiteralPath $settings)) { Set-Content -LiteralPath $settings -Value '{"font_size": 12.0}' -Encoding utf8 }
+$protectedUserFiles = @{}
+foreach ($path in @((Join-Path $config 'gx-shell-preserve-marker.lua'), $settings,
+    (Join-Path $profile '.zshrc.local'), (Join-Path $profile 'gx-shell-preserve-marker.txt'))) {
+    $protectedUserFiles[$path] = (Get-FileHash -LiteralPath $path).Hash
 }
-$owned = @(Owned-PathEntries)
-Assert ($owned.Count -eq 1) "expected one owned PATH entry after reinstall, found $($owned.Count)"
-$registered = @(Owned-Fonts)
-Assert ($registered.Count -eq 8) "expected 8 registered GX Shell fonts after reinstall, found $($registered.Count)"
-Assert ((Get-ItemProperty -LiteralPath 'HKCU:\Software\GX Shell').InstallDir -ceq $installDir) 'installation directory changed on reinstall'
+$beforeReinstall = UserData-State
+Run-Setup $Installer 'reinstall'
+Assert-UserData $beforeReinstall 'reinstall'
+Runtime-Recheck 'reinstall'
+Stop-Installation
 
-Step 'uninstall removes the installation, owned PATH and fonts but keeps user data'
+Step 'uninstall removes only owned resources and preserves every user-data file'
 Run-Uninstall 'uninstall'
 
-Step 'a fresh install into the same directory is not blocked by leftovers'
+Step 'a second installation preserves data and runs GX Zsh, herdr and WezTerm again'
+$beforeSecondInstall = UserData-State
 Run-Setup $Installer 'install-again'
-Assert (Test-Path -LiteralPath (Join-Path $app 'bin\gx-zsh.exe')) 'fresh install into the same directory did not install GX Zsh'
+Assert-UserData $beforeSecondInstall 'install-again'
+Runtime-Recheck 'install-again'
+Stop-Installation
 
 Step 'uninstalling again removes everything the same way'
 Run-Uninstall 'uninstall-again'
@@ -571,8 +734,10 @@ $smokeProvenance.status = 'PASS'
 $smokeProvenance.legacy_release_upgrade = if ($LegacyInstaller -or $PreviousInstaller) { 'PASS_EXPLICIT_INPUT_ONLY' } else { 'NOT_RUN' }
 $smokeProvenance | Add-Member -NotePropertyName coverage -NotePropertyValue @{
     install = 'PASS'; same_version_reinstall = 'PASS'; uninstall = 'PASS'; user_configuration = 'PASS'; occupied_file_refusal = 'PASS'
+    reinstall_runtime = 'PASS'; second_install_runtime = 'PASS'; profile_contents = 'PASS'; non_owned_baseline = 'PASS'
+    hosted_software_window = 'EVIDENCE_READY'; desktop_input_echo_redraw = 'NOT_RUN'; hardware_gpu = 'NOT_RUN'; images_reviewed = $false
     legacy_wezterm = $(if ($LegacyInstaller) { 'PASS_EXPLICIT_INPUT_ONLY' } else { 'NOT_RUN' })
     previous_gx_shell = $(if ($PreviousInstaller) { 'PASS_EXPLICIT_INPUT_ONLY' } else { 'NOT_RUN' })
 }
 $smokeProvenance | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath (Join-Path $Evidence 'smoke-provenance.json') -Encoding utf8
-"PASS: GX Shell Windows installer lifecycle; legacy release upgrade: $($smokeProvenance.legacy_release_upgrade)" | Tee-Object -FilePath (Join-Path $Evidence 'result.txt')
+"PASS: GX Shell Windows installer lifecycle only; GUI images await review, desktop input/echo/redraw and hardware GPU NOT_RUN; legacy release upgrade: $($smokeProvenance.legacy_release_upgrade)" | Tee-Object -FilePath (Join-Path $Evidence 'result.txt')

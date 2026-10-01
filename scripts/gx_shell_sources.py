@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Validate source locks and materialize independent, pinned component repositories.
 
-Commit existence and gx ancestry are separate checks: checkout checks the former
-without consulting a floating branch; only check --require-remote verifies the
-latter. Only the explicit update command resolves new gx heads and changes a lock.
+Commit existence and component-branch ancestry are separate checks: checkout
+checks the former without consulting a floating branch; check --require-remote
+verifies the latter and the remote default HEAD. Only the explicit update command
+resolves new component-branch heads, verifies their default HEADs and changes a lock.
 """
 from __future__ import annotations
 
@@ -18,7 +19,12 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
-COMPONENTS = ("herdr", "ohmyzsh", "wezterm")
+COMPONENT_BRANCHES = {
+    "herdr": "feature/gx_herdr",
+    "ohmyzsh": "feature/gx_ohmyzsh",
+    "wezterm": "feature/gx_wezterm",
+}
+COMPONENTS = tuple(COMPONENT_BRANCHES)
 REVISION = re.compile(r"[0-9a-fA-F]{40}\Z")
 
 
@@ -60,7 +66,8 @@ def _read_lock(path: Path) -> tuple[bytes, dict]:
         require(isinstance(entry, dict) and set(entry) == {"repository", "branch", "revision"},
                 f"{name}: expected repository, branch and revision fields")
         require(entry["repository"] == f"gx0404/{name}", f"{name}: unexpected repository")
-        require(entry["branch"] == "gx", f"{name}: branch must be gx")
+        require(entry["branch"] == COMPONENT_BRANCHES[name],
+                f"{name}: branch must be {COMPONENT_BRANCHES[name]}")
         require(isinstance(entry["revision"], str) and REVISION.fullmatch(entry["revision"]) is not None,
                 f"{name}: revision must be a full 40-hex commit SHA")
     return raw, lock
@@ -257,12 +264,37 @@ def _init(path: Path, entry: dict) -> None:
     _git(path, "remote", "add", "origin", _url(entry))
 
 
+def _branch_ref(entry: dict) -> str:
+    return f"refs/heads/{entry['branch']}"
+
+
+def _tracking_ref(entry: dict) -> str:
+    return f"refs/remotes/origin/{entry['branch']}"
+
+
 def _remote_head(path: Path, entry: dict) -> str:
     _init(path, entry)
+    branch_ref = _branch_ref(entry)
+    listing = _git(path, "ls-remote", "--symref", _url(entry), "HEAD", branch_ref).stdout.splitlines()
+    default_refs = []
+    branch_revisions = []
+    for line in listing:
+        fields = line.split("\t")
+        if len(fields) != 2:
+            continue
+        value, name = fields
+        if name == "HEAD" and value.startswith("ref: "):
+            default_refs.append(value[5:])
+        elif name == branch_ref:
+            branch_revisions.append(value)
+    require(default_refs == [branch_ref],
+            f"remote default HEAD does not point to {branch_ref}")
+    require(len(branch_revisions) == 1 and REVISION.fullmatch(branch_revisions[0]) is not None,
+            f"remote {branch_ref} did not resolve to a full commit SHA")
     _git(path, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", _url(entry),
-         "refs/heads/gx:refs/remotes/origin/gx")
-    revision = _git(path, "rev-parse", "refs/remotes/origin/gx", offline=True).stdout.strip()
-    require(REVISION.fullmatch(revision) is not None, "remote gx did not resolve to a full commit SHA")
+         f"{branch_ref}:{_tracking_ref(entry)}")
+    revision = _git(path, "rev-parse", _tracking_ref(entry), offline=True).stdout.strip()
+    require(REVISION.fullmatch(revision) is not None, "remote branch did not resolve to a full commit SHA")
     _require_commit(path, revision)
     return revision
 
@@ -280,8 +312,9 @@ def check(path: str | Path, *, require_remote: bool = False) -> dict:
                          _url(entry), entry["revision"])
                 _require_commit(repo, entry["revision"])
                 ancestry = _git(repo, "merge-base", "--is-ancestor", entry["revision"],
-                                "refs/remotes/origin/gx", offline=True, codes=(0, 1))
-                require(ancestry.returncode == 0, f"{name}: locked commit exists but is not an ancestor of gx")
+                                _tracking_ref(entry), offline=True, codes=(0, 1))
+                require(ancestry.returncode == 0,
+                        f"{name}: locked commit exists but is not an ancestor of {entry['branch']}")
     return {"lock_digest": hashlib.sha256(raw).hexdigest(), "components": lock["components"]}
 
 
@@ -356,13 +389,13 @@ def main(argv: list[str] | None = None) -> int:
     validator = commands.add_parser("check", help="validate lock offline; remote checks are opt-in")
     validator.add_argument("--lock", required=True, type=Path)
     validator.add_argument("--require-remote", action="store_true",
-                           help="verify commit existence AND gx ancestry (separate validations; requires network)")
-    materializer = commands.add_parser("checkout", help="checkout locked SHAs without resolving gx heads")
+                           help="verify commit existence, component-branch ancestry and default HEAD (requires network)")
+    materializer = commands.add_parser("checkout", help="checkout locked SHAs without resolving branch heads")
     materializer.add_argument("--lock", required=True, type=Path)
     materializer.add_argument("--output", required=True, type=Path)
     materializer.add_argument("--component", action="append", choices=COMPONENTS)
     materializer.add_argument("--offline", action="store_true", help="reuse complete pinned clones; never fetch")
-    updater = commands.add_parser("update", help="explicitly resolve gx heads and atomically replace an existing complete lock")
+    updater = commands.add_parser("update", help="verify default HEADs, resolve component-branch heads and atomically replace the lock")
     updater.add_argument("--lock", required=True, type=Path)
     args = parser.parse_args(argv)
     try:

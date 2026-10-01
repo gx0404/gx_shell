@@ -3,17 +3,17 @@
   "components": {
     "herdr": {
       "repository": "gx0404/herdr",
-      "branch": "gx",
-      "revision": "1a6b9d4d13d1b547fe0e21197baeb2ac4e27bef0"
+      "branch": "feature/gx_herdr",
+      "revision": "b6a27411f73f26ca4483b6b4134e1ed694be2aa3"
     },
     "ohmyzsh": {
       "repository": "gx0404/ohmyzsh",
-      "branch": "gx",
-      "revision": "dde872a53c8bdd45f0d4dded809d6dbd67d0196f"
+      "branch": "feature/gx_ohmyzsh",
+      "revision": "333f4390747a28e83179903f928ff8e29bdeafad"
     },
     "wezterm": {
       "repository": "gx0404/wezterm",
-      "branch": "gx",
+      "branch": "feature/gx_wezterm",
       "revision": "4b219eea6a46eab9de03444612b90766d1d0d806"
     }
   }

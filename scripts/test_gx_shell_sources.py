@@ -21,7 +21,8 @@ SECRET = "GX_SOURCE_SECRET_MUST_NOT_LEAK"
 
 def example_lock():
     return {"schema": 1, "components": {
-        name: {"repository": f"gx0404/{name}", "branch": "gx", "revision": str(index) * 40}
+        name: {"repository": f"gx0404/{name}", "branch": sources.COMPONENT_BRANCHES[name],
+               "revision": str(index) * 40}
         for index, name in enumerate(sources.COMPONENTS, 1)},
         "toolchains": {"rust": "fixture-only"}, "metadata": {"preserve": True}}
 
@@ -68,7 +69,7 @@ class LockTests(unittest.TestCase):
         cases.append(lock)
         for field, values in {
             "repository": ["another/herdr", "https://github.com/gx0404/herdr.git", "gx0404/wezterm", None],
-            "branch": ["main", "refs/heads/gx", None],
+            "branch": ["gx", "main", "feature/gx_ohmyzsh", "refs/heads/feature/gx_herdr", None],
             "revision": ["gx", "main", "1" * 39, "1" * 41, "z" * 40, "1" * 40 + "\n", 1, None],
         }.items():
             for value in values:
@@ -88,6 +89,16 @@ class LockTests(unittest.TestCase):
         for index, value in enumerate(cases):
             with self.subTest(case=index):
                 self.write(value)
+                with self.assertRaises(sources.SourceError):
+                    sources.load_lock(self.path)
+
+    def test_legacy_and_cross_component_branches_are_rejected(self):
+        for branch in ("gx", sources.COMPONENT_BRANCHES["ohmyzsh"],
+                       "refs/heads/" + sources.COMPONENT_BRANCHES["herdr"]):
+            with self.subTest(branch=branch):
+                lock = example_lock()
+                lock["components"]["herdr"]["branch"] = branch
+                self.write(lock)
                 with self.assertRaises(sources.SourceError):
                     sources.load_lock(self.path)
 
@@ -152,7 +163,8 @@ class GitSourceTests(unittest.TestCase):
         for name in ("leaf", "vendor", *sources.COMPONENTS):
             repo = cls.remotes / f"{name}.git"
             repo.mkdir()
-            cls.git_at(repo, "init", "--quiet", "--initial-branch=gx", "--template=")
+            branch = sources.COMPONENT_BRANCHES.get(name, "gx")
+            cls.git_at(repo, "init", "--quiet", f"--initial-branch={branch}", "--template=")
             (repo / ".gitattributes").write_bytes(b"*.txt text\n")
             (repo / "tracked.txt").write_bytes(f"{name} locked contents\n".encode("utf-8"))
             if name == "ohmyzsh":
@@ -169,7 +181,7 @@ class GitSourceTests(unittest.TestCase):
             cls.git_at(repo, "commit", "--quiet", "-m", f"{name} locked commit")
             cls.revisions[name] = cls.git_at(repo, "rev-parse", "HEAD")
             if name in sources.COMPONENTS:
-                (repo / "latest.txt").write_text(f"{name} newer gx head\n", encoding="utf-8")
+                (repo / "latest.txt").write_text(f"{name} newer {branch} head\n", encoding="utf-8")
                 cls.git_at(repo, "add", ".")
                 cls.git_at(repo, "commit", "--quiet", "-m", f"{name} later commit")
             cls.heads[name] = cls.git_at(repo, "rev-parse", "HEAD")
@@ -177,7 +189,7 @@ class GitSourceTests(unittest.TestCase):
         cls.git_at(herdr, "checkout", "--quiet", "--orphan", "unrelated")
         cls.git_at(herdr, "commit", "--quiet", "-m", "unrelated root")
         cls.unrelated = cls.git_at(herdr, "rev-parse", "HEAD")
-        cls.git_at(herdr, "checkout", "--quiet", "gx")
+        cls.git_at(herdr, "checkout", "--quiet", sources.COMPONENT_BRANCHES["herdr"])
         cls.blob = cls.git_at(herdr, "rev-parse", "HEAD:tracked.txt")
         cls.git_at(herdr, "tag", "-a", "fixture-tag", "-m", "annotated tag")
         cls.tag = cls.git_at(herdr, "rev-parse", "fixture-tag")
@@ -419,11 +431,12 @@ class GitSourceTests(unittest.TestCase):
 
     def test_wrong_head_and_attached_head_are_not_reset(self):
         repo = self.clone()
-        self.git_at(repo, "switch", "--quiet", "-c", "gx")
+        branch = sources.COMPONENT_BRANCHES["herdr"]
+        self.git_at(repo, "switch", "--quiet", "-c", branch)
         self.cli("checkout", "--output", self.output, "--component", "herdr", ok=False)
-        self.assertEqual(self.git_at(repo, "symbolic-ref", "--short", "HEAD"), "gx")
+        self.assertEqual(self.git_at(repo, "symbolic-ref", "--short", "HEAD"), branch)
         self.git_at(repo, "fetch", "--quiet", "origin", self.heads["herdr"], env=self.env)
-        self.git_at(repo, "checkout", "--quiet", "--detach", self.heads["herdr"] )
+        self.git_at(repo, "checkout", "--quiet", "--detach", self.heads["herdr"])
         self.cli("checkout", "--output", self.output, "--component", "herdr", ok=False)
         self.assertEqual(self.git_at(repo, "rev-parse", "HEAD"), self.heads["herdr"])
 
@@ -511,13 +524,13 @@ class GitSourceTests(unittest.TestCase):
         self.assertEqual((outer / ".git/config").read_bytes(), config_before)
         self.assertEqual(self.git_at(outer, "rev-parse", "HEAD"), sha)
 
-    def test_commit_existence_and_gx_ancestry_are_separate(self):
+    def test_commit_existence_and_component_branch_ancestry_are_separate(self):
         self.lock["components"]["herdr"]["revision"] = self.unrelated
         self.write_lock()
         self.cli("check")
         self.clone()
         result = self.cli("check", "--require-remote", ok=False)
-        self.assertIn("not an ancestor of gx", result.stderr)
+        self.assertIn(f"not an ancestor of {sources.COMPONENT_BRANCHES['herdr']}", result.stderr)
 
     def test_tags_blobs_and_missing_objects_are_not_commit_revisions(self):
         for label, revision in (("blob", self.blob), ("tag", self.tag), ("missing", "f" * 40)):
@@ -528,17 +541,34 @@ class GitSourceTests(unittest.TestCase):
                 self.assertFalse((self.output / "herdr").exists())
                 self.assertEqual(list(self.output.iterdir()), [])
 
-    def remove_remote_gx(self):
-        isolated = self.root / "isolated.git"
-        shutil.copytree(self.remotes / "herdr.git", isolated)
-        self.git_at(isolated, "update-ref", "-d", "refs/heads/gx")
+    def isolated_remote(self, name="herdr"):
+        isolated = self.root / f"isolated-{name}.git"
+        shutil.copytree(self.remotes / f"{name}.git", isolated)
         with self.config.open("a", encoding="utf-8") as stream:
-            stream.write(f'[url "{isolated.as_uri()}"]\n\tinsteadOf = https://github.com/gx0404/herdr.git\n')
+            stream.write(f'[url "{isolated.as_uri()}"]\n'
+                         f'\tinsteadOf = https://github.com/gx0404/{name}.git\n')
+        return isolated
 
-    def test_checkout_does_not_require_or_reresolve_floating_gx(self):
-        self.remove_remote_gx()
+    def remove_remote_branch(self, name="herdr"):
+        isolated = self.isolated_remote(name)
+        branch_ref = f"refs/heads/{sources.COMPONENT_BRANCHES[name]}"
+        self.git_at(isolated, "update-ref", "-d", branch_ref)
+
+    def test_checkout_does_not_require_or_reresolve_floating_component_branch(self):
+        self.remove_remote_branch()
         self.clone()
         self.cli("check", "--require-remote", ok=False)
+
+    def test_remote_default_head_must_match_component_branch_for_check_and_update(self):
+        isolated = self.isolated_remote()
+        foreign = sources.COMPONENT_BRANCHES["ohmyzsh"]
+        self.git_at(isolated, "update-ref", f"refs/heads/{foreign}", self.heads["herdr"])
+        self.git_at(isolated, "symbolic-ref", "HEAD", f"refs/heads/{foreign}")
+        before = self.lock_path.read_bytes()
+        result = self.cli("check", "--require-remote", ok=False)
+        self.assertIn("remote default HEAD", result.stderr)
+        self.cli("update", ok=False)
+        self.assertEqual(self.lock_path.read_bytes(), before)
 
     def test_explicit_update_preserves_metadata_and_writes_all_heads_atomically(self):
         result = self.cli("update")
@@ -552,8 +582,8 @@ class GitSourceTests(unittest.TestCase):
         self.assertEqual(result["lock_digest"], sources.lock_digest(self.lock_path))
         self.assertEqual(list(self.root.glob(".components.lock.json-*")), [])
 
-    def test_missing_remote_gx_never_partially_updates_lock(self):
-        self.remove_remote_gx()
+    def test_missing_remote_component_branch_never_partially_updates_lock(self):
+        self.remove_remote_branch()
         before = self.lock_path.read_bytes()
         self.cli("update", ok=False)
         self.assertEqual(self.lock_path.read_bytes(), before)

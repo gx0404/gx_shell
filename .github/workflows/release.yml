@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.14.7'
-      - name: Validate source lock and gx ancestry, then checkout exact SHAs
+      - name: Validate source lock and default-branch ancestry, then checkout exact SHAs
         run: |
           set -euo pipefail
           python scripts/gx_shell_sources.py check --lock components.lock.json --require-remote > "$RUNNER_TEMP/validated-lock.json"
@@ -212,7 +212,7 @@ jobs:
   wezterm-windows:
     needs: prepare
     runs-on: windows-2025
-    timeout-minutes: 150
+    timeout-minutes: 240
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
@@ -245,14 +245,29 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.11
         with:
           version: v0.18.0
-      - name: Launcher unit tests
+      - name: Coordinator tests on Windows
+        shell: pwsh
+        run: |
+          python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}
+      - name: Launcher and Windows configuration, mux and GUI tests
         shell: pwsh
         working-directory: ${{ runner.temp }}/sources/wezterm
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CMAKE_BUILD_PARALLEL_LEVEL: '2'
         run: |
+          $env:PATH = "C:\Strawberry\perl\bin;" + $env:PATH
           New-Item -ItemType Directory -Force .local/gx-tests | Out-Null
           rustc --edition=2021 --test scripts/gx-launcher/main.rs -o .local/gx-tests/launcher-tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .local/gx-tests/launcher-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p config -p mux -p wezterm-gui --no-fail-fast --test-threads 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build and stage WezTerm for Windows
         shell: pwsh
@@ -615,6 +630,26 @@ jobs:
             -HerdrProbe "$env:RUNNER_TEMP/sources/ohmyzsh/scripts/gx_probe_herdr.py" `
             -ComponentsLock "$PWD/components.lock.json" -PackageManifest $manifest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Archive the Windows payload after lifecycle validation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -B -c 'import os, sys; from pathlib import Path; sys.path.insert(0, "scripts"); import gx_shell_package as p; p.check_assembly(Path(os.environ["RUNNER_TEMP"]) / "assembly")'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archive = Join-Path $env:RUNNER_TEMP 'runtime-windows.tar'
+          tar -cf $archive -C $env:RUNNER_TEMP assembly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant())  runtime-windows.tar" |
+            Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runtime-windows
+          path: |
+            ${{ runner.temp }}/runtime-windows.tar
+            ${{ runner.temp }}/runtime-windows.tar.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -679,7 +714,7 @@ jobs:
   smoke-linux:
     needs: [prepare, package-linux]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -711,16 +746,19 @@ jobs:
           GX_UBUNTU: ${{ matrix.ubuntu }}
         run: |
           set -euo pipefail
+          docker build --file packaging/debian/smoke.Dockerfile \
+            --build-arg "UBUNTU_VERSION=$GX_UBUNTU" --tag "gx-shell-smoke:$GX_UBUNTU" packaging/debian
           mkdir -p "$RUNNER_TEMP/evidence"
           docker run --rm --volume "$PWD:/workspace:ro" --volume "$RUNNER_TEMP/evidence:/evidence" \
             --volume "$RUNNER_TEMP/sources/ohmyzsh:/sources/ohmyzsh:ro" --workdir /workspace \
-            --env GITHUB_ACTIONS=true --env DEBIAN_FRONTEND=noninteractive --env TZ=UTC \
-            --env GX_SMOKE_USER=gx-smoke --env GX_SMOKE_DIST=/workspace/dist --env GX_SMOKE_EVIDENCE=/evidence \
+            --env GITHUB_ACTIONS --env DEBIAN_FRONTEND=noninteractive --env TZ=UTC \
+            --env GX_SMOKE_USER=gx-smoke --env GX_SMOKE_DIST=/workspace/dist --env GX_SMOKE_EVIDENCE=/evidence/lifecycle \
+            --env GX_SMOKE_PYTHON=/opt/gx-smoke-python/bin/python3.14 \
             --env GX_SMOKE_HERDR_PROBE=/sources/ohmyzsh/scripts/gx_probe_herdr.py \
             --env GX_SMOKE_COMPONENTS_LOCK=/workspace/components.lock.json \
-            "ubuntu:$GX_UBUNTU" bash -euo pipefail -c '
+            "gx-shell-smoke:$GX_UBUNTU" bash -euo pipefail -c '
               apt-get update
-              apt-get install -y --no-install-recommends ca-certificates python3 procps xvfb xauth x11-apps ffmpeg
+              git config --global --add safe.directory /sources/ohmyzsh
               useradd --create-home gx-smoke
               bash scripts/gx_shell_smoke_linux.sh
             '
@@ -732,8 +770,42 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  publish:
+  verify:
     needs: [prepare, ohmyzsh-posix, wezterm-tests, package-windows, package-linux, smoke-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Verify both platform artifacts without publishing
+        env:
+          GX_VERSION: ${{ needs.prepare.outputs.version }}
+          GX_SHA: ${{ needs.prepare.outputs.sha }}
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          set -euo pipefail
+          python -c 'import os, sys; sys.path.insert(0, "scripts"); import gx_shell_sources as s; assert s.check("components.lock.json")["lock_digest"] == os.environ["GX_LOCK_DIGEST"]'
+          python scripts/gx_shell_package.py verify --dir dist --version "$GX_VERSION" --sha "$GX_SHA" \
+            --components-lock components.lock.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: verified-checksums
+          path: dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [prepare, verify]
     if: needs.prepare.outputs.publish == 'true' && github.repository == 'gx0404/gx_shell'
     runs-on: ubuntu-24.04
     timeout-minutes: 20

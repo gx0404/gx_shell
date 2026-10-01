@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 import gx_shell_build as build
+import gx_shell_sources as sources
 
 
 class BuildDriverTests(unittest.TestCase):
@@ -20,7 +21,7 @@ class BuildDriverTests(unittest.TestCase):
         self.assertEqual(set(lock["components"]), {"herdr", "ohmyzsh", "wezterm"})
         for name, entry in lock["components"].items():
             self.assertEqual(entry["repository"], "gx0404/" + name)
-            self.assertEqual(entry["branch"], "gx")
+            self.assertEqual(entry["branch"], sources.COMPONENT_BRANCHES[name])
             self.assertRegex(entry["revision"], r"^[0-9a-f]{40}$")
 
     def test_help_is_available_without_sources_or_tools(self):

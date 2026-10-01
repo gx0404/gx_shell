@@ -4,6 +4,8 @@
 # points, GX Zsh, herdr identity / managed update / completion / real Zsh pane, WezTerm seeding,
 # fonts and configuration cases (tests/pure_fn_test.lua), GUI default shell, reinstall, removal
 # and purge with user data preserved and another account's HOME untouched.
+# Required GX_SMOKE_PYTHON: absolute Python >= 3.9 with the standard library used by the
+# coordinator package/source modules and the locked herdr probe; no system-python fallback.
 # Exit status: 0 when every check passes; 2 when refused (not disposable); 1 on failure.
 set -euo pipefail
 if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${1:-}" != --allow-system-install ]; then
@@ -16,10 +18,6 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 : "${GX_SMOKE_USER:?Set GX_SMOKE_USER to a non-root test account}"
 [ "$(id -u "$GX_SMOKE_USER")" -ne 0 ]
-if dpkg-query -W -f='${db:Status-Status}' gx-shell 2>/dev/null | grep -qx installed; then
-    echo 'Refusing to replace an existing gx-shell installation in a lifecycle test.' >&2
-    exit 2
-fi
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${GX_SMOKE_DIST:-$repo/dist}"
@@ -29,6 +27,43 @@ if [ "${#packages[@]}" -ne 1 ] || [ ! -f "${packages[0]}" ]; then
     exit 1
 fi
 package="${packages[0]}"
+: "${GX_SMOKE_PYTHON:?Set GX_SMOKE_PYTHON to an absolute Python >= 3.9 executable; no system python3 fallback}"
+case "$GX_SMOKE_PYTHON" in
+    /*) ;;
+    *) echo 'GX_SMOKE_PYTHON must be an absolute interpreter path, not a command with arguments.' >&2; exit 2 ;;
+esac
+if [ ! -f "$GX_SMOKE_PYTHON" ] || [ ! -x "$GX_SMOKE_PYTHON" ]; then
+    echo "GX_SMOKE_PYTHON is not an executable regular file: $GX_SMOKE_PYTHON" >&2
+    exit 2
+fi
+if ! runuser -u "$GX_SMOKE_USER" -- test -r "$GX_SMOKE_PYTHON" -a -x "$GX_SMOKE_PYTHON"; then
+    echo "GX_SMOKE_PYTHON is not readable and executable by $GX_SMOKE_USER: $GX_SMOKE_PYTHON" >&2
+    exit 2
+fi
+python_runtime="$("$GX_SMOKE_PYTHON" -I -B - "$repo" <<'PY'
+import sys
+
+minimum = (3, 9)
+if sys.version_info[:2] < minimum:
+    raise SystemExit(
+        f"GX_SMOKE_PYTHON must be Python >= {minimum[0]}.{minimum[1]}; "
+        f"got {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / 'scripts'))
+import gx_shell_package
+import gx_shell_sources
+
+print(json.dumps({'executable': sys.executable, 'version': sys.version.split()[0],
+                  'minimum_version': '3.9', 'imports': ['gx_shell_package', 'gx_shell_sources']}))
+PY
+)"
+if dpkg-query -W -f='${db:Status-Status}' gx-shell 2>/dev/null | grep -qx installed; then
+    echo 'Refusing to replace an existing gx-shell installation in a lifecycle test.' >&2
+    exit 2
+fi
 : "${GX_SMOKE_HERDR_PROBE:?Set GX_SMOKE_HERDR_PROBE to scripts/gx_probe_herdr.py in the locked external Oh My Zsh checkout}"
 : "${GX_SMOKE_COMPONENTS_LOCK:?Set GX_SMOKE_COMPONENTS_LOCK to the lock used to assemble this package}"
 herdr_probe="$(realpath -e -- "$GX_SMOKE_HERDR_PROBE")"
@@ -39,8 +74,11 @@ if [ -e "$evidence" ] || [ -L "$evidence" ]; then
     echo "Evidence output must be new: $evidence" >&2
     exit 1
 fi
-mkdir -p "$evidence"
-python3 -B - "$repo" "$package" "$package_manifest" "$components_lock" "$herdr_probe" "$evidence" <<'PY'
+mkdir -p "$(dirname "$evidence")"
+mkdir -- "$evidence"
+evidence="$(realpath -e -- "$evidence")"
+printf '%s\n' "$python_runtime" > "$evidence/python-runtime.json"
+"$GX_SMOKE_PYTHON" -I -B - "$repo" "$package" "$package_manifest" "$components_lock" "$herdr_probe" "$evidence" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -128,12 +166,19 @@ assert_config_log() {
     fi
 }
 assert_entry_points() {
+    local name target
     for name in gx-zsh herdr wezterm-gx wezterm-gx-gui; do
         [ "$(command -v "$name")" = "/usr/bin/$name" ]
         [ "$(dpkg-query -S "/usr/bin/$name")" = "gx-shell: /usr/bin/$name" ]
+        case "$name" in
+            gx-zsh|herdr) target="/usr/lib/ohmyzsh-gx/bin/$name" ;;
+            *) target="/usr/lib/wezterm-gx/$name" ;;
+        esac
+        [ "$(readlink -f "/usr/bin/$name")" = "$target" ]
+        [ "$(dpkg-query -S "$target")" = "gx-shell: $target" ]
+        [ "$(stat -c '%u:%g' "/usr/bin/$name")" = 0:0 ]
+        [ "$(stat -c '%u:%g' "$target")" = 0:0 ]
     done
-    [ "$(readlink -f /usr/bin/gx-zsh)" = /usr/lib/ohmyzsh-gx/bin/gx-zsh ]
-    [ "$(readlink -f /usr/bin/wezterm-gx-gui)" = /usr/lib/wezterm-gx/wezterm-gx-gui ]
 }
 assert_absent() {
     for path in "$@"; do
@@ -150,13 +195,41 @@ home_manifest() {
 config_manifest() {
     (cd "$1" && find . -type f -exec sha256sum {} + | LC_ALL=C sort -k2)
 }
+readonly evidence_root="$evidence"
 expose_evidence() {
-    find "$evidence" \( -type s -o -type p \) -delete 2>/dev/null || true
-    chmod -R a+rX "$evidence" 2>/dev/null || true
+    find "$evidence_root" \( -type s -o -type p \) -delete 2>/dev/null || true
+    chmod -R a+rX "$evidence_root" 2>/dev/null || true
 }
 trap expose_evidence EXIT
 
+step selected Python and locked probe work as the non-root account
+run_user "$GX_SMOKE_PYTHON" -I -B - "$herdr_probe" "$evidence" <<'PY' > "$evidence/python-user-runtime.json"
+import hashlib
+import json
+import os
+from pathlib import Path
+import runpy
+import sys
+
+probe, evidence = map(Path, sys.argv[1:])
+expected = json.loads((evidence / 'python-runtime.json').read_text(encoding='utf-8'))
+if os.geteuid() == 0:
+    raise SystemExit('probe preflight must run as the non-root smoke account')
+if (sys.version.split()[0] != expected['version']
+        or Path(sys.executable).resolve() != Path(expected['executable']).resolve()):
+    raise SystemExit('root and non-root smoke Python runtimes differ')
+receipt = json.loads((evidence / 'smoke-provenance.json').read_text(encoding='utf-8'))
+if hashlib.sha256(probe.read_bytes()).hexdigest() != receipt['herdr_probe']['sha256']:
+    raise SystemExit('herdr probe changed after provenance preflight')
+runpy.run_path(str(probe), run_name='gx_smoke_probe_preflight')
+print(json.dumps({'executable': sys.executable, 'version': sys.version.split()[0],
+                  'uid': os.geteuid(), 'imports': ['gx_probe_herdr']}))
+PY
+
 id -u "$witness_user" > /dev/null 2>&1 || useradd --create-home "$witness_user"
+[ "$(id -u "$witness_user")" -ne 0 ]
+[ "$(id -u "$witness_user")" -ne "$(id -u "$GX_SMOKE_USER")" ] ||
+    fail 'The witness and smoke accounts must have different UIDs'
 witness_home="$(getent passwd "$witness_user" | cut -d: -f6)"
 home_manifest "$witness_user" "$witness_home" > "$evidence/witness-home.before"
 
@@ -192,24 +265,26 @@ if [ -n "${legacy:-}" ]; then
     [ ! -s "$evidence/legacy-fonts-left.txt" ] || fail "fonts of $legacy remain: $(cat "$evidence/legacy-fonts-left.txt")"
 fi
 
-step entry points
-assert_entry_points
+assert_runtime() {
+    local evidence="$1" provenance="$2"
+    step entry points
+    assert_entry_points
 
-step GX Zsh with Oh My Zsh
-run_user gx-zsh -c 'print -r -- "zsh=$ZSH_VERSION omz=$ZSH"' > "$evidence/gx-zsh.txt" 2>&1
-cat "$evidence/gx-zsh.txt"
-grep -q 'zsh=5\.9\.2 omz=/usr/share/ohmyzsh-gx' "$evidence/gx-zsh.txt"
+    step GX Zsh with Oh My Zsh
+    run_user gx-zsh -c 'print -r -- "zsh=$ZSH_VERSION omz=$ZSH"' > "$evidence/gx-zsh.txt" 2>&1
+    cat "$evidence/gx-zsh.txt"
+    grep -q 'zsh=5\.9\.2 omz=/usr/share/ohmyzsh-gx' "$evidence/gx-zsh.txt"
 
-step herdr package identity, managed update and packaged completion
-run_user herdr --version | tee "$evidence/herdr-version.txt"
-python3 -B - "$evidence" "$herdr_probe" <<'PY'
+    step herdr package identity, managed update and packaged completion
+    run_user herdr --version | tee "$evidence/herdr-version.txt"
+    "$GX_SMOKE_PYTHON" -I -B - "$evidence" "$herdr_probe" "$provenance" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
-evidence, probe = map(Path, sys.argv[1:])
-receipt = json.loads((evidence / 'smoke-provenance.json').read_text(encoding='utf-8'))
+evidence, probe, provenance = map(Path, sys.argv[1:])
+receipt = json.loads(provenance.read_text(encoding='utf-8'))
 if (evidence / 'herdr-version.txt').read_text(encoding='utf-8').strip() != receipt['expected_herdr_version']:
     raise SystemExit('herdr version differs from the locked herdr revision and package identity')
 records = [record for record in receipt['stages']['ohmyzsh']['payload']
@@ -219,61 +294,62 @@ if len(records) != 1 or hashlib.sha256(Path('/usr/lib/ohmyzsh-gx/lib/herdr/herdr
 if hashlib.sha256(probe.read_bytes()).hexdigest() != receipt['herdr_probe']['sha256']:
     raise SystemExit('herdr probe changed after provenance preflight')
 PY
-if run_user herdr update > "$evidence/herdr-update.txt" 2>&1; then
-    echo 'herdr update was not blocked' >&2
-    exit 1
-fi
-grep -q 'managed by Oh My Zsh GX' "$evidence/herdr-update.txt"
-[ "$(head -n 1 /usr/share/ohmyzsh-gx/gx/omz-custom/plugins/herdr/_herdr)" = '#compdef herdr' ] ||
-    fail 'the packaged herdr completion is missing'
+    if run_user herdr update > "$evidence/herdr-update.txt" 2>&1; then
+        fail 'herdr update was not blocked'
+    fi
+    grep -q 'managed by Oh My Zsh GX' "$evidence/herdr-update.txt"
+    [ "$(head -n 1 /usr/share/ohmyzsh-gx/gx/omz-custom/plugins/herdr/_herdr)" = '#compdef herdr' ] ||
+        fail 'the packaged herdr completion is missing'
 
-step herdr server with a real GX Zsh pane
-run_user python3 -B "$herdr_probe" --herdr /usr/lib/ohmyzsh-gx/lib/herdr/herdr \
-    --zsh /usr/lib/ohmyzsh-gx/bin/zsh --output "$evidence/herdr-probe" > "$evidence/herdr-probe.json"
-grep -q '"status": "PASS"' "$evidence/herdr-probe.json"
+    step herdr server with a real GX Zsh pane
+    run_user "$GX_SMOKE_PYTHON" -I -B "$herdr_probe" --herdr /usr/lib/ohmyzsh-gx/lib/herdr/herdr \
+        --zsh /usr/lib/ohmyzsh-gx/libexec/zsh/zsh --output "$evidence/herdr-probe" > "$evidence/herdr-probe.json"
+    grep -q '"status": "PASS"' "$evidence/herdr-probe.json"
 
-step WezTerm seeds its configuration and finds the bundled fonts
-run_user wezterm-gx --version | tee "$evidence/wezterm-version.txt"
-run_user wezterm-gx --gx-initialize-only
-test -f "$test_home/.config/wezterm/wezterm.lua"
-test -f "$test_home/.config/wezterm/utils/gx-shell.lua"
-test "$(find "$test_home/.local/share/wezterm/plugins" -path '*/.git/HEAD' | wc -l)" -eq 4
-run_user wezterm-gx ls-fonts > "$evidence/fonts.log" 2>&1
-assert_config_log "$evidence/fonts.log"
-grep -q '/usr/share/fonts/truetype/gx-shell/JetBrainsMonoNerdFont-Regular.ttf' "$evidence/fonts.log"
-grep -q '/usr/share/fonts/truetype/gx-shell/NotoSansCJK-Regular.ttc' "$evidence/fonts.log"
-fc-list > "$evidence/fc-list.txt"
-grep -q '/truetype/gx-shell/' "$evidence/fc-list.txt"
+    step WezTerm seeds its configuration and finds the bundled fonts
+    run_user wezterm-gx --version | tee "$evidence/wezterm-version.txt"
+    run_user wezterm-gx --gx-initialize-only > "$evidence/wezterm-init.log" 2>&1
+    assert_config_log "$evidence/wezterm-init.log"
+    test -f "$test_home/.config/wezterm/wezterm.lua"
+    test -f "$test_home/.config/wezterm/utils/gx-shell.lua"
+    test "$(find "$test_home/.local/share/wezterm/plugins" -path '*/.git/HEAD' | wc -l)" -eq 4
+    run_user wezterm-gx ls-fonts > "$evidence/fonts.log" 2>&1
+    assert_config_log "$evidence/fonts.log"
+    grep -q '/usr/share/fonts/truetype/gx-shell/JetBrainsMonoNerdFont-Regular.ttf' "$evidence/fonts.log"
+    grep -q '/usr/share/fonts/truetype/gx-shell/NotoSansCJK-Regular.ttc' "$evidence/fonts.log"
+    fc-list > "$evidence/fc-list.txt"
+    grep -q '/truetype/gx-shell/' "$evidence/fc-list.txt"
 
-step WezTerm configuration cases pass on the packaged binary and configuration
-# The cases print their verdict through the Lua log (stderr); a failing require falls back to the default
-# configuration silently, so only the final ALL PASS line counts.
-run_user timeout 120 wezterm-gx --config-file "$payload/tests/pure_fn_test.lua" show-keys > "$evidence/pure-fn-test.log" 2>&1 ||
-    { cat "$evidence/pure-fn-test.log" >&2; fail 'wezterm-gx show-keys failed on tests/pure_fn_test.lua'; }
-grep -a 'PURE_FN_TEST' "$evidence/pure-fn-test.log" || true
-grep -aq 'PURE_FN_TEST: ALL PASS' "$evidence/pure-fn-test.log" ||
-    fail 'tests/pure_fn_test.lua did not pass on the packaged WezTerm; see pure-fn-test.log'
+    step WezTerm configuration cases pass on the packaged binary and configuration
+    # A failing require falls back to default configuration; only the final ALL PASS counts.
+    run_user timeout 120 wezterm-gx --config-file "$payload/tests/pure_fn_test.lua" show-keys > "$evidence/pure-fn-test.log" 2>&1 ||
+        { cat "$evidence/pure-fn-test.log" >&2; fail 'wezterm-gx show-keys failed on tests/pure_fn_test.lua'; }
+    grep -a 'PURE_FN_TEST' "$evidence/pure-fn-test.log" || true
+    grep -aq 'PURE_FN_TEST: ALL PASS' "$evidence/pure-fn-test.log" ||
+        fail 'tests/pure_fn_test.lua did not pass on the packaged WezTerm; see pure-fn-test.log'
 
-step WezTerm GUI starts GX Zsh by default
-run_user timeout 90 xvfb-run -a bash -c '
-    set -euo pipefail
-    LIBGL_ALWAYS_SOFTWARE=1 wezterm-gx-gui --config front_end=\"OpenGL\" --config enable_wayland=false \
-        start --always-new-process --no-auto-connect > "$1/gui.log" 2>&1 &
-    gui=$!
-    trap "kill $gui 2>/dev/null || true" EXIT
-    for _ in $(seq 1 60); do
-        if pgrep -P "$gui" -u "$(id -u)" -f "^/usr/lib/ohmyzsh-gx/libexec/zsh/zsh" > "$1/gui-shell.pid"; then break; fi
-        sleep 0.5
-    done
-    ps -o pid,ppid,args -u "$(id -u)" > "$1/gui-processes.txt"
-    test -s "$1/gui-shell.pid"
-    test "$(readlink "/proc/$gui/exe")" = /usr/lib/wezterm-gx/wezterm-gui
-    sleep 5
-    kill -0 "$gui"
-    xwd -root -silent > "$1/screen.xwd"
-    ffmpeg -hide_banner -loglevel error -y -i "$1/screen.xwd" -frames:v 1 "$1/linux.png"
-' bash "$evidence"
-assert_config_log "$evidence/gui.log"
+    step WezTerm GUI starts GX Zsh by default with software rendering
+    run_user timeout 90 xvfb-run -a bash -c '
+        set -euo pipefail
+        LIBGL_ALWAYS_SOFTWARE=1 wezterm-gx-gui --config front_end=\"OpenGL\" --config enable_wayland=false \
+            start --always-new-process --no-auto-connect > "$1/gui.log" 2>&1 &
+        gui=$!
+        trap "kill $gui 2>/dev/null || true; wait $gui 2>/dev/null || true" EXIT
+        for _ in $(seq 1 60); do
+            if pgrep -P "$gui" -u "$(id -u)" -f "^/usr/lib/ohmyzsh-gx/libexec/zsh/zsh" > "$1/gui-shell.pid"; then break; fi
+            sleep 0.5
+        done
+        ps -o pid,ppid,args -u "$(id -u)" > "$1/gui-processes.txt"
+        test -s "$1/gui-shell.pid"
+        test "$(readlink "/proc/$gui/exe")" = /usr/lib/wezterm-gx/wezterm-gui
+        sleep 5
+        kill -0 "$gui"
+        xwd -root -silent > "$1/screen.xwd"
+        ffmpeg -hide_banner -loglevel error -y -i "$1/screen.xwd" -frames:v 1 "$1/linux.png"
+    ' bash "$evidence"
+    assert_config_log "$evidence/gui.log"
+}
+assert_runtime "$evidence" "$evidence/smoke-provenance.json"
 
 if [ -n "${legacy:-}" ]; then
     step "the untouched 0.3.0 configuration is migrated file by file"
@@ -306,20 +382,58 @@ if [ -n "${legacy:-}" ]; then
     find "$legacy_config" "${backups[0]}" -type f -exec sha256sum {} + > "$evidence/legacy-data.sha256"
 fi
 
-step reinstall keeps user data and entry points
-printf '\n-- gx-shell-preserve-marker\n' >> "$test_home/.config/wezterm/wezterm.lua"
-sha256sum "$test_home/.config/wezterm/wezterm.lua" "$test_home/.config/ohmyzsh-gx/profile/.zshrc" \
-    > "$evidence/user-data.sha256"
-HOME="$witness_home" apt-get install -y --reinstall "$package" > "$evidence/reinstall.log" 2>&1
-sha256sum -c "$evidence/user-data.sha256"
-assert_entry_points
+user_data_manifest() {
+    "$GX_SMOKE_PYTHON" -I -B - "$test_home" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import stat
+import sys
+
+home = Path(sys.argv[1])
+records = []
+for relative in ('.config/wezterm/wezterm.lua', '.config/wezterm/gui-settings.json',
+                 '.config/ohmyzsh-gx/profile/.zshrc', '.local/share/gx-smoke/preserve.txt',
+                 '.local/state/gx-smoke/preserve.txt'):
+    path = home / relative
+    details = path.lstat()
+    if not stat.S_ISREG(details.st_mode):
+        raise SystemExit(f'protected user data is not a regular file: {relative}')
+    records.append({'path': relative, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                    'mode': stat.S_IMODE(details.st_mode), 'uid': details.st_uid, 'gid': details.st_gid})
+print(json.dumps(records, sort_keys=True, indent=2))
+PY
+}
+assert_user_data() {
+    user_data_manifest > "$evidence/user-data.$1.json"
+    diff -u "$evidence/user-data.before.json" "$evidence/user-data.$1.json"
+}
+
+step reinstall keeps user data and runtime behavior
+run_user bash -c '
+    set -euo pipefail
+    printf "\n-- gx-shell-preserve-marker\n" >> "$XDG_CONFIG_HOME/wezterm/wezterm.lua"
+    printf "\n# gx-shell-preserve-marker\n" >> "$XDG_CONFIG_HOME/ohmyzsh-gx/profile/.zshrc"
+    printf "{\"font_size\": 13.0}\n" > "$XDG_CONFIG_HOME/wezterm/gui-settings.json"
+    mkdir -p "$XDG_DATA_HOME/gx-smoke" "$XDG_STATE_HOME/gx-smoke"
+    printf "gx-shell-user-data\n" > "$XDG_DATA_HOME/gx-smoke/preserve.txt"
+    printf "gx-shell-user-state\n" > "$XDG_STATE_HOME/gx-smoke/preserve.txt"
+'
+user_data_manifest > "$evidence/user-data.before.json"
+HOME="$witness_home" apt-get install -y --reinstall "$package" > "$evidence/reinstall.log" 2>&1 ||
+    { cat "$evidence/reinstall.log" >&2; exit 1; }
+assert_user_data after-reinstall
+dpkg-query -W -f='${Package} ${Version}\n' gx-shell > "$evidence/reinstalled.txt"
+cmp "$evidence/installed.txt" "$evidence/reinstalled.txt"
+run_user mkdir -- "$evidence/reinstall-runtime"
+assert_runtime "$evidence/reinstall-runtime" "$evidence/smoke-provenance.json"
+assert_user_data after-reinstall-runtime
 
 step remove keeps user data
 HOME="$witness_home" apt-get remove -y gx-shell > "$evidence/remove.log" 2>&1
-for path in /usr/bin/gx-zsh /usr/bin/herdr /usr/bin/wezterm-gx /usr/lib/ohmyzsh-gx /usr/lib/wezterm-gx; do
-    test ! -e "$path"
-done
-sha256sum -c "$evidence/user-data.sha256"
+assert_absent /usr/bin/gx-zsh /usr/bin/herdr /usr/bin/wezterm-gx /usr/bin/wezterm-gx-gui \
+    /usr/lib/ohmyzsh-gx /usr/lib/wezterm-gx
+assert_user_data after-remove
 test -d "$test_home/.config/ohmyzsh-gx/profile"
 
 step purge removes what the package owned and keeps user data
@@ -333,7 +447,7 @@ fc-list > "$evidence/fc-list-purged.txt"
 if grep -q '/truetype/gx-shell/' "$evidence/fc-list-purged.txt"; then
     fail 'fc-list still lists the GX Shell fonts after purge'
 fi
-sha256sum -c "$evidence/user-data.sha256"
+assert_user_data after-purge
 test -d "$test_home/.config/ohmyzsh-gx/profile"
 if [ -n "${legacy:-}" ]; then
     sha256sum -c "$evidence/legacy-data.sha256"
@@ -342,7 +456,7 @@ fi
 step "maintainer scripts left $witness_home untouched"
 home_manifest "$witness_user" "$witness_home" > "$evidence/witness-home.after"
 diff -u "$evidence/witness-home.before" "$evidence/witness-home.after"
-python3 -B - "$evidence/smoke-provenance.json" "${GX_SMOKE_LEGACY_DEB:-}" <<'PY'
+"$GX_SMOKE_PYTHON" -I -B - "$evidence/smoke-provenance.json" "${GX_SMOKE_LEGACY_DEB:-}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -350,10 +464,13 @@ import sys
 path = Path(sys.argv[1])
 receipt = json.loads(path.read_text(encoding='utf-8'))
 receipt['status'] = 'PASS'
+receipt['python_runtime'] = json.loads((path.parent / 'python-runtime.json').read_text(encoding='utf-8'))
+receipt['python_user_runtime'] = json.loads((path.parent / 'python-user-runtime.json').read_text(encoding='utf-8'))
 receipt['legacy_release_upgrade'] = 'PASS_EXPLICIT_INPUT_ONLY' if sys.argv[2] else 'NOT_RUN'
 receipt['coverage'] = {
-    'install': 'PASS', 'same_version_reinstall': 'PASS', 'remove': 'PASS', 'purge': 'PASS',
-    'user_configuration': 'PASS', 'witness_home_unchanged': 'PASS',
+    'install': 'PASS', 'same_version_reinstall': 'PASS', 'reinstall_runtime': 'PASS',
+    'remove': 'PASS', 'purge': 'PASS', 'user_configuration': 'PASS', 'user_data_content_and_ownership': 'PASS',
+    'witness_home_unchanged': 'PASS', 'gui_renderer': 'Xvfb/software OpenGL', 'hardware_gpu': 'NOT_RUN',
     'legacy_wezterm': receipt['legacy_release_upgrade'], 'previous_gx_shell': 'NOT_RUN',
 }
 path.write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')

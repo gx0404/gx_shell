@@ -1,7 +1,8 @@
 # gx_shell（gx0404/gx_shell 协调仓）
 
 主仓负责 GX Shell 的安装器、组件整合与发布；三个 fork 负责源码、上游同步与自身测试。
-主仓通过 `components.lock.json` 锁定各 fork 的 `gx` 分支完整 SHA，外部 checkout → stage → 根 assemble。
+主仓通过 `components.lock.json` 锁定各 fork 既有默认分支的完整 SHA，分支对应关系见「来源锁与身份」。
+构建链为外部 checkout → stage → 根 assemble。
 安装、来源锁更新、本地资源规划和当前 PENDING 项见 `README.md`。
 
 ## 规则入口
@@ -22,9 +23,10 @@
 ## 硬边界
 
 - **来源锁与身份**：锁文件 `schema: 1`，`components` 恰含 `herdr`、`ohmyzsh`、`wezterm`；每项恰为
-  `repository: gx0404/<name>`、`branch: gx`、`revision: <40 位 commit SHA>`。构建使用锁定 SHA，
+  `repository: gx0404/<name>`、`branch`、`revision: <40 位 commit SHA>`。`branch` 分别为既有默认分支
+  `feature/gx_herdr`、`feature/gx_ohmyzsh`、`feature/gx_wezterm`。构建与 checkout 只使用锁定 SHA，
   不能解析浮动分支替代它。`scripts/gx_shell_sources.py check` 验结构与原始字节 SHA-256；
-  `check --require-remote` 另验 commit 存在且可从该 fork 的 `gx` 到达。来源更新必须显式执行、审阅 diff。
+  `check --require-remote` 另验 commit 存在且可从对应默认分支到达。来源更新必须显式执行、审阅 diff。
 - **外部 checkout**：CI 根 checkout 与组件 checkout 分离，组件放在 `RUNNER_TEMP`；本地放仓外短 ASCII
   路径。三个 fork 各有独立 Git 元数据；WezTerm 递归初始化自身 `.gitmodules`，根仓不再维护组件子模块。
   不复用有改动、SHA 不符、共享父仓 Git 元数据的目录，不 reset 或清除用户工作来凑齐构建条件。
@@ -36,7 +38,7 @@
 - **安装布局是跨组件契约**：Windows 为 `{app}\bin`、`lib`、`runtime\msys64`、
   `share\ohmyzsh-gx`、`fonts` 加 `{app}\wezterm\`；deb 为 `/usr/lib/{ohmyzsh-gx,wezterm-gx}`、
   `/usr/share/{ohmyzsh-gx,wezterm-gx}`。改布局须协调两个 fork 的启动器、WezTerm fork 内的
-  `dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager 与两份冒烟脚本，更新锁并重新验收。
+  `dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager、安装生命周期与硬件 GPU 冒烟入口，更新锁并重新验收。
 - **local 永远不可发布**：Windows 先用 `scripts/gx_shell_local_build.ps1` 做只读 CPU/内存规划。
   Cargo、CMake、Zsh 共用预算，组件串行，不把 jobs 乘以组件数；GPU 只用于后续 runtime smoke，不用于编译。
   本地构建用 `GX_LOCAL_BUILD_ROOT`，herdr 回执为 `builder=local`；组装必须 `--allow-dirty`，
@@ -50,16 +52,24 @@
   旧版到新版升级未验证，必须明确披露。配置指纹与迁移数据由 WezTerm fork 维护并随 stage 提供。
 - **安装器只动自己拥有的东西**：Windows 仅写 HKCU 的 PATH、字体与 `Software\GX Shell`，
   文件占用时拒绝而不杀进程；deb 维护脚本不写用户 HOME。真实安装/卸载只在一次性 runner 或容器执行。
-- **历史与同步**：上游同步、组件提交历史与测试留在 fork；根仓不再做 subtree pull。最终协调仓以
-  **无父初始化 commit** 建立新历史，不继承旧 subtree 合并历史；此项是迁移收尾，不代表当前 HEAD 已完成
-  重建。文档维护不修改 refs，不删除组件目录；历史重建与推送须由负责迁移的操作者单独执行和验证。
+- **验收环境隔离**：完整 Windows 安装器与生命周期在 GitHub-hosted Windows 验证；同一个 DEB 在
+  Ubuntu GitHub runner 的 Docker Ubuntu 20.04/24.04 容器验证。本机不安装 Docker/WSL，仅以隔离的
+  完整 payload 做硬件 GPU/窗口验收；新增入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 尚待实测。
+  软件 fallback 只能证明软件渲染路径，不能替代硬件 GPU 验收；CPU 构建与 GPU 运行时证据分别记录。
+- **历史与同步**：上游同步、组件提交历史与测试留在 fork；根仓不再做 subtree pull。将 `gx` 的独有
+  提交以保留历史的合并纳入各自默认分支，验收后才删除 `gx`，不重写 fork 历史。根工作区不含组件目录；
+  仓外迁移副本中 herdr、ohmyzsh 仍检出 `gx`，wezterm 不含独立 Git 元数据；不删除迁移副本，也不借清理覆盖用户工作。
+- **根协调仓历史重建（独立 PENDING）**：保留未来以**无父初始化 commit** 建立根协调仓新历史、
+  不继承旧 subtree 合并历史的迁移计划；组件默认分支切换与 `gx` 删除不取消此项。它不在本轮执行范围，
+  须在代码与两平台验收完成后另行授权、单独执行和验证，不能宣称当前 HEAD 已完成重建。
+  文档维护不修改 refs、不执行历史重建、分支清理或推送。
 
 ## 完成标准
 
 - 根测试：`python -m unittest discover -s scripts -p 'test_gx_shell_*.py'`；Linux 另跑 deb/符号链接用例。
-- 真实 lock 就绪后运行 `python scripts/gx_shell_sources.py check --lock components.lock.json`，
-  再加 `--require-remote` 验远端。缺 lock 或组件尚未推送时标 PENDING，不造 SHA 或临时真实 lock。
+- 真实锁已存在；默认分支合并及锁更新后，重跑 `python scripts/gx_shell_sources.py check --lock components.lock.json`，
+  再加 `--require-remote` 验远端。未完成的校验标 PENDING，不造 SHA 或用旧 `gx` 校验结果代替本轮证据。
 - 改 `packaging/windows/gx-shell.iss` 须用 Inno Setup 7.1 实际编译；改 workflow 须跑已有 `actionlint`，
   缺工具则标 PENDING，不临时安装。组件测试按外部 fork 的规则执行，不能被根夹具单测替代。
-- 工具探测与真实构建分开记录；sccache/Inno/Docker/zsh 等当前缺口、验收命令见 README。
-  交付列出实际命令、结果/跳过数与未验证项；没有两平台 CI 和一次性环境证据，不声称发布验收完成。
+- 工具探测与真实构建分开记录；工具缺口、验收路线和命令见 README。历史 101 项测试、7 项跳过不是本轮结果。
+  本轮尚无真实产品验收结果，最终实测后回填实际命令、结果/跳过数与未验证项；不提前声称发布验收完成。

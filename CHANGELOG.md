@@ -7,15 +7,16 @@
 ## 未发布（外置组件迁移）
 
 本节记录已批准的架构与迁移中的接口，不分配新版本、不改历史发布日期，也不代表构建/CI 已通过。
-真实锁、组件 stage 联调与发布验收完成前，不能根据下方旧版本的日期标题再次发布。
+真实锁已存在；默认分支切换、组件 stage 联调与发布验收完成前，不能根据旧版本的日期标题再次发布。
 
 - 主仓改为协调仓：通过 `components.lock.json` 的 `schema: 1` 锁定三个 fork，
-  `components[name]` 恰为 `repository`、`branch: gx` 与完整 40 位 `revision`。
-  根 coordinator SHA 与各组件 SHA 分别追溯，不再把根 HEAD 当作组件版本。
+  `components[name]` 恰为 `repository`、`branch` 与完整 40 位 `revision`。仓库仍为
+  `gx0404/{herdr,ohmyzsh,wezterm}`，分支分别改为既有默认分支 `feature/gx_herdr`、
+  `feature/gx_ohmyzsh`、`feature/gx_wezterm`。根与组件 SHA 分别追溯，不把根 HEAD 当作组件版本。
 - 源码在仓外独立 checkout；WezTerm 递归取其自身子模块，主仓不再维护根组件源码、subtree
   同步或根 `.gitmodules`。各 fork 负责源码、上游同步和自身测试，根负责安装器、整合与发布。
 - 来源工具提供 `check`、固定 SHA `checkout`、显式 `update`；更新须审阅 diff，构建不追随
-  浮动 `gx`。`--require-remote` 另验 commit 存在和 `gx` 可达性；锁 digest 取原始字节。
+  浮动分支。`--require-remote` 另验 commit 存在且从各自默认分支可达；锁 digest 取原始字节。
 - 整包接口迁移到 schema 2：外部 stage → assemble → build → verify，记录锁快照/digest、
   四仓来源、构建回执与文件清单。package jobs 只消费 stage artifacts 和根打包材料；
   缺材料、来源不符、散列或布局冲突必须拒绝，不能从根组件目录悄悄补文件。接口联调仍为 PENDING。
@@ -23,14 +24,21 @@
   JSON/环境建议，不下载、安装或构建。组件串行共享 jobs，缓存按组件 SHA、工具链和 target
   隔离；GPU 仅参与后续 runtime smoke。本地 `builder=local`、`--allow-dirty` 和 `-local`
   的不可发布边界不变，禁止伪造 CI 身份。
+- 已批准的验收路线：GitHub-hosted Windows 完整安装器与安装生命周期；Ubuntu GitHub runner
+  上用 Docker 的 Ubuntu 20.04/24.04 容器验证同一个 DEB；本机仅对隔离的完整 payload 做硬件
+  GPU/窗口验收，不在本机安装 Docker/WSL。新增入口为 `scripts/gx_shell_smoke_gpu_windows.ps1`，
+  尚未实测；软件 fallback 只能验证软件渲染路径，不能替代硬件 GPU 验收。
 - 旧 Release 资产按迁移决定退出下载与验收输入；新流程不再依赖旧安装包或旧根仓指纹 commit，
   **没有旧 Release 升级覆盖**，不以 warning skip 伪称通过。同版本重装不等于跨版本升级。
   配置指纹由 WezTerm fork 维护并随 stage 提供；安装布局和用户数据保护契约保持不变。
-- 最终协调仓以**无父初始化 commit** 建立新历史，不继承旧 subtree 合并历史；组件历史保留
-  在各 fork。无父初始化、旧目录清理、真实锁与 WezTerm 最终 revision 属迁移收尾 PENDING，
-  本次文档编辑不修改 refs、不提交、不 push/tag/release。
-- 验收命令与 sccache、Inno Setup 7.1、Docker、zsh/PTY、nextest 等当前 PENDING 项见 README。
-  必须报告实际运行结果与跳过项；根夹具单测不能代替组件构建、安装器编译或两平台冒烟。
+- 组件分支迁移保留历史：核对时三个远端 `gx` 分别有 2/3/5 个默认分支未包含的提交，herdr 两侧
+  已分叉，正通过保留历史的合并纳入默认分支；验收后才删除 `gx`，不重写 fork 历史。根工作区不含
+  组件目录；仓外迁移副本中 herdr、ohmyzsh 仍检出 `gx`，wezterm 不是独立 Git 仓库；不删除迁移副本。
+- 根协调仓未来以**无父初始化 commit** 建立新历史、不继承旧 subtree 合并历史的迁移计划仍为
+  **独立 PENDING**，未因组件默认分支切换及 `gx` 删除而取消。它不在本轮执行范围，须在代码与
+  两平台验收完成后另行授权、单独执行和验证。本次文档编辑不修改 refs、不提交、不 push/tag/release。
+- 验收命令及 PENDING 项见 README。原 101 项测试、7 项跳过是历史快照，不是本轮结果；
+  本轮尚无真实产品验收结果，须在最终实测后回填。根夹具单测不能代替组件构建、安装器或两平台冒烟。
 
 以下 0.2.0 / 0.1.0 是迁移前历史记录：其中 subtree、旧 Release 升级、指纹生成与耗时描述
 不再是新架构的操作流程或本次验收结果。保留它们用于解释既有行为，不表示旧资产仍可下载。

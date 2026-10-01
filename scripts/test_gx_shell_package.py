@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import gx_shell_package as package
+import gx_shell_sources as sources
 
 SHA = "a" * 40
 HERDR_SHA, OMZ_SHA, WEZTERM_SHA = "b" * 40, "c" * 40, "d" * 40
@@ -28,7 +29,7 @@ def write(path: Path, data: bytes = b"fixture", executable: bool = False) -> Non
 
 def write_lock(root: Path) -> Path:
     lock = {"schema": 1, "components": {
-        name: {"repository": f"gx0404/{name}", "branch": "gx", "revision": revision}
+        name: {"repository": f"gx0404/{name}", "branch": sources.COMPONENT_BRANCHES[name], "revision": revision}
         for name, revision in (("herdr", HERDR_SHA), ("ohmyzsh", OMZ_SHA), ("wezterm", WEZTERM_SHA))},
         "toolchains": {"fixture": "independent-repositories"}}
     path = root / "components.lock.json"
@@ -883,7 +884,7 @@ class RepositoryTests(unittest.TestCase):
             self.assertEqual(len({SHA, *(item["revision"] for item in lock["components"].values())}), 4)
             for name, entry in lock["components"].items():
                 self.assertEqual(entry["repository"], f"gx0404/{name}")
-                self.assertEqual(entry["branch"], "gx")
+                self.assertEqual(entry["branch"], sources.COMPONENT_BRANCHES[name])
             for invalid in ("gx", "HEAD", "abc1234"):
                 lock["components"]["herdr"]["revision"] = invalid
                 package.write_json(path, lock)

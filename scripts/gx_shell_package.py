@@ -4,7 +4,7 @@
 Inputs are complete stages from independently locked gx0404/wezterm and
 gx0404/ohmyzsh revisions, with gx0404/herdr provenance checked separately.
 The coordinator commit comes from this repository's HEAD. Assembly, build and
-verification are offline: they neither check out components nor resolve gx heads.
+verification are offline: they neither check out components nor resolve component-branch heads.
 Outputs are a Windows Setup EXE or Ubuntu DEB, corresponding-source archive,
 schema-2 manifest and SHA-256 sidecars.
 """
