@@ -138,6 +138,11 @@ jobs:
             echo "publish=$publish"
           } | tee -a "$GITHUB_OUTPUT"
           python scripts/gx_shell_package.py notes --version "$version" > /dev/null
+      - name: Install coordinator test runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh
       - name: Unit tests (coordinator and independent fork packaging)
         run: |
           set -euo pipefail
