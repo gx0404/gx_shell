@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "description": "Migration baseline: installed MSYS2 packages replacing base-image versions",
+  "packages": [
+    {"name": "msys2-runtime", "upgrades_base": "3.6.10-5"}
+  ]
+}

@@ -1,0 +1,12 @@
+#!/bin/sh
+# 只刷新系统字体缓存与桌面数据库；不启动 shell、不修改用户 HOME，失败返回非零。
+set -eu
+case "$1" in
+  configure)
+    fc-cache -f /usr/share/fonts/truetype/gx-shell
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database /usr/share/applications
+    fi
+    ;;
+esac
+exit 0

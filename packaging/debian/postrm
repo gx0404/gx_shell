@@ -1,0 +1,20 @@
+#!/bin/sh
+# remove/purge 只维护系统字体缓存与桌面数据库；用户配置、历史和 herdr 会话保留。
+# fontconfig 2.13（Ubuntu 20.04）会在字体目录里留下 .uuid，dpkg 因此删不掉本包清空后的字体目录。
+set -eu
+case "$1" in
+  remove|purge)
+    fonts=/usr/share/fonts/truetype/gx-shell
+    if [ -d "$fonts" ]; then
+      rm -f "$fonts/.uuid"
+      rmdir "$fonts" 2>/dev/null || true
+    fi
+    if command -v fc-cache >/dev/null 2>&1; then
+      fc-cache -f
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database /usr/share/applications
+    fi
+    ;;
+esac
+exit 0

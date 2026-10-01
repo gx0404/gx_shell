@@ -1,0 +1,18 @@
+Package: gx-shell
+Version: @VERSION@
+Section: shells
+Priority: optional
+Architecture: amd64
+Maintainer: gx0404 <gx0404@users.noreply.github.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: @DEPENDS@
+Provides: herdr
+Conflicts: herdr, herdr-gx, ohmyzsh-gx, wezterm-gx
+Replaces: herdr-gx, ohmyzsh-gx, wezterm-gx
+Homepage: https://github.com/gx0404/gx_shell
+Description: WezTerm GX terminal, GX Zsh (Oh My Zsh GX) and herdr in one package
+ GX Shell bundles the WezTerm GX terminal with its configuration, plugins and
+ fonts, the isolated Oh My Zsh GX profile on a pinned Zsh runtime (gx-zsh), and
+ the herdr terminal workspace manager. WezTerm starts GX Zsh by default.
+ User configuration is created only when an ordinary user runs a launcher;
+ maintainer scripts never modify HOME, existing dotfiles or the login shell.

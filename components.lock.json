@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "components": {
+    "herdr": {
+      "repository": "gx0404/herdr",
+      "branch": "gx",
+      "revision": "1a6b9d4d13d1b547fe0e21197baeb2ac4e27bef0"
+    },
+    "ohmyzsh": {
+      "repository": "gx0404/ohmyzsh",
+      "branch": "gx",
+      "revision": "dde872a53c8bdd45f0d4dded809d6dbd67d0196f"
+    },
+    "wezterm": {
+      "repository": "gx0404/wezterm",
+      "branch": "gx",
+      "revision": "4b219eea6a46eab9de03444612b90766d1d0d806"
+    }
+  }
+}

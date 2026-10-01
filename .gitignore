@@ -1,0 +1,11 @@
+# 主仓只管理来源锁与整包；组件 checkout 和编译缓存放仓外，遵守各 fork 的忽略规则。
+# 根产物使用锚定规则；不要忽略 components.lock.json、packaging/ 或测试夹具。
+/dist/
+/build/
+/stage/
+/stages/
+/assembly/
+/.local/
+/.ui-evidence/
+__pycache__/
+*.pyc

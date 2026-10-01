@@ -1,0 +1,803 @@
+name: release
+
+# Build independent, locked fork stages outside the coordinator checkout.
+# Only complete stages reach the installer jobs; both platforms and their tests
+# must pass before a tag/manual run can publish. Historical release installers
+# are not inputs: these smoke gates do not claim old-release upgrade coverage.
+on:
+  push:
+    tags: ['gx-shell-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'X.Y.Z; leave empty to use CHANGELOG.md'
+        required: false
+        default: ''
+      publish:
+        description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUTF8: '1'
+  TZ: UTC
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      version: ${{ steps.meta.outputs.version }}
+      rust: ${{ steps.sources.outputs.rust }}
+      nextest: ${{ steps.sources.outputs.nextest }}
+      lock_digest: ${{ steps.sources.outputs.lock_digest }}
+      publish: ${{ steps.meta.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Validate source lock and gx ancestry, then checkout exact SHAs
+        run: |
+          set -euo pipefail
+          python scripts/gx_shell_sources.py check --lock components.lock.json --require-remote > "$RUNNER_TEMP/validated-lock.json"
+          python scripts/gx_shell_sources.py checkout --lock components.lock.json --output "$RUNNER_TEMP/sources" \
+            --component ohmyzsh --component wezterm > "$RUNNER_TEMP/source-checkouts.json"
+      - name: Bind lock digest, component dependency identity and toolchain
+        id: sources
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import sys
+
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          lock = sources.load_lock("components.lock.json")
+          digest = sources.lock_digest("components.lock.json")
+          validated = json.loads((root / "validated-lock.json").read_text(encoding="utf-8"))
+          checked = json.loads((root / "source-checkouts.json").read_text(encoding="utf-8"))
+          if validated["lock_digest"] != digest or checked["lock_digest"] != digest:
+              raise SystemExit("Source lock changed between validation and checkout")
+          wezterm = root / "sources/wezterm"
+          ohmyzsh = root / "sources/ohmyzsh"
+          dependency = json.loads((ohmyzsh / "scripts/packaging/dependencies.json").read_text(encoding="utf-8"))["herdr"]
+          herdr = lock["components"]["herdr"]
+          if dependency["repository"] != "https://github.com/" + herdr["repository"] or dependency["revision"] != herdr["revision"]:
+              raise SystemExit("Oh My Zsh dependency lock differs from the coordinator herdr identity")
+          if dependency["source"].get("commit") != herdr["revision"]:
+              raise SystemExit("Oh My Zsh herdr source archive differs from the locked commit")
+          sys.path.insert(0, str(wezterm / "scripts"))
+          import gx_package
+
+          rust = gx_package.RUST_VERSION
+          if rust != dependency["rust"] or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rust):
+              raise SystemExit("WezTerm and herdr must pin the same Rust version")
+          nextest = re.findall(r'^NEXTEST_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
+                               (wezterm / "scripts/setup_env.sh").read_text(encoding="utf-8"), re.MULTILINE)
+          if len(nextest) != 1:
+              raise SystemExit("WezTerm must pin exactly one NEXTEST_VERSION")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for name, value in (("lock_digest", digest), ("rust", rust), ("nextest", nextest[0])):
+                  print(f"{name}={value}", file=output)
+      - name: Resolve coordinator version and release eligibility
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          version="$(python scripts/gx_shell_package.py version)"
+          sha="$(git rev-parse HEAD)"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            [ "$GITHUB_REF_NAME" = "gx-shell-v$version" ] || { echo "tag $GITHUB_REF_NAME does not match CHANGELOG.md version $version" >&2; exit 1; }
+            publish=true
+          else
+            [ -z "$INPUT_VERSION" ] || [ "${INPUT_VERSION#gx-shell-v}" = "$version" ] || { echo "input $INPUT_VERSION differs from CHANGELOG.md version $version" >&2; exit 1; }
+            publish="$INPUT_PUBLISH"
+          fi
+          if [ "$publish" = true ]; then
+            python scripts/gx_shell_package.py version --release > /dev/null
+            status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$sha" --jq .status)"
+            [ "$status" = identical ] || [ "$status" = behind ] || { echo "commit $sha is not on main (compare status: $status)" >&2; exit 1; }
+            tag="gx-shell-v$version"
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "Release $tag already exists; published releases are never overwritten." >&2
+              exit 1
+            fi
+            if ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>/dev/null)"; then
+              existing="$(jq -r .object.sha <<< "$ref")"
+              if [ "$(jq -r .object.type <<< "$ref")" = tag ]; then
+                existing="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$existing" --jq .object.sha)"
+              fi
+              if [ "$existing" != "$sha" ]; then
+                echo "Tag $tag points to $existing, not $sha; tags are never moved." >&2
+                exit 1
+              fi
+            fi
+          fi
+          {
+            echo "sha=$sha"
+            echo "version=$version"
+            echo "publish=$publish"
+          } | tee -a "$GITHUB_OUTPUT"
+          python scripts/gx_shell_package.py notes --version "$version" > /dev/null
+      - name: Unit tests (coordinator and independent fork packaging)
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s scripts -p 'test_gx_shell_*.py'
+          (cd "$RUNNER_TEMP/sources/wezterm" && python -m unittest discover -s scripts -p 'test_gx_*.py')
+          (cd "$RUNNER_TEMP/sources/ohmyzsh" && python -m unittest discover -s tests -p 'test_gx_*.py')
+
+  ohmyzsh-posix:
+    needs: [prepare, shell-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.prepare.outputs.rust }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-shell-linux
+          path: ${{ runner.temp }}/shell
+      - name: Checkout locked Oh My Zsh test sources
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["ohmyzsh"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - name: GX profile, Windows layer and native launcher tests on the packaged GX Zsh and a real PTY
+        working-directory: ${{ runner.temp }}/sources/ohmyzsh
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh fzf
+          # Run on the Zsh this commit packages: stock Zsh 5.9 metafies non-ASCII paths in zcompile and
+          # zf_mv, which the GX patch fixes and the tests' Chinese profile paths exercise.
+          mkdir -p "$RUNNER_TEMP/shell-stage"
+          tar -xf "$RUNNER_TEMP/shell/stage.tar" -C "$RUNNER_TEMP/shell-stage"
+          root="$RUNNER_TEMP/shell-stage/payload/usr/lib/ohmyzsh-gx"
+          test -x "$root/libexec/zsh/zsh"
+          # Same as the packaged bin/zsh, but without external commands (gx_windows.py runs with a minimal
+          # PATH) and keeping a caller's FPATH (the polluted-FPATH case sets its own).
+          GX_TEST_ZSH="$RUNNER_TEMP/gx-test-zsh"
+          {
+            echo '#!/bin/sh'
+            echo "root='$root'"
+            echo 'if [ -z "${FPATH+set}" ]; then FPATH="$root/share/zsh/functions:$root/share/zsh/site-functions"; export FPATH; fi'
+            echo 'unset MODULE_PATH'
+            echo 'exec "$root/libexec/zsh/zsh" "$@"'
+          } > "$GX_TEST_ZSH"
+          chmod 755 "$GX_TEST_ZSH"
+          "$GX_TEST_ZSH" -fc 'print -r -- "GX Zsh $ZSH_VERSION"'
+          export GX_TEST_ZSH
+          # The launcher tests point HOME at a sandbox, where the rustup proxy finds no toolchain.
+          GX_RUSTC="$(rustc --print sysroot)/bin/rustc"
+          export GX_RUSTC
+          python tests/gx_package_profile.py
+          python tests/gx_windows.py
+          python tests/gx_launcher.py
+
+  wezterm-windows:
+    needs: prepare
+    runs-on: windows-2025
+    timeout-minutes: 150
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      SCCACHE_GHA_ENABLED: 'true'
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Checkout locked WezTerm with recursive submodules
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["wezterm"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.prepare.outputs.rust }}
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
+      - name: Launcher unit tests
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/sources/wezterm
+        run: |
+          New-Item -ItemType Directory -Force .local/gx-tests | Out-Null
+          rustc --edition=2021 --test scripts/gx-launcher/main.rs -o .local/gx-tests/launcher-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .local/gx-tests/launcher-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and stage WezTerm for Windows
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/sources/wezterm
+        env:
+          RUSTC_WRAPPER: sccache
+        run: |
+          $env:PATH = "C:\Strawberry\perl\bin;" + $env:PATH
+          python scripts/gx_package.py windows --stage-dir "$env:RUNNER_TEMP/wezterm-stage"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          tar -cf "$env:RUNNER_TEMP/stage.tar" -C "$env:RUNNER_TEMP/wezterm-stage" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage-wezterm-windows
+          path: ${{ runner.temp }}/stage.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  wezterm-linux:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Checkout locked WezTerm with recursive submodules
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["wezterm"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.prepare.outputs.rust }}
+          components: rustfmt
+      - name: Restore Ubuntu 20.04 Cargo cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/sources/wezterm/.local/gx-deb-cache
+          key: gx-shell-focal-v2-${{ needs.prepare.outputs.rust }}-${{ needs.prepare.outputs.lock_digest }}
+      - name: Launcher and Lua unit tests
+        working-directory: ${{ runner.temp }}/sources/wezterm
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+          lua5.4 scripts/tests/gx_resurrect.lua
+          lua5.4 scripts/tests/gx_shells.lua
+          rustfmt --edition 2021 --check scripts/gx-launcher/main.rs
+          mkdir -p .local/gx-tests
+          rustc --edition=2021 --test scripts/gx-launcher/main.rs -o .local/gx-tests/launcher-tests
+          .local/gx-tests/launcher-tests
+      - name: Build and stage WezTerm on the Ubuntu 20.04 baseline
+        working-directory: ${{ runner.temp }}/sources/wezterm
+        run: |
+          set -euo pipefail
+          python3 scripts/gx_package.py deb --container --cache-dir .local/gx-deb-cache --stage-dir "$RUNNER_TEMP/wezterm-out/stage"
+          tar -cf "$RUNNER_TEMP/stage.tar" -C "$RUNNER_TEMP/wezterm-out/stage" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage-wezterm-linux
+          path: ${{ runner.temp }}/stage.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  wezterm-tests:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: '0'
+      # A debug build with line tables still reports panic locations; full debug info only slows the cold build.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Checkout locked WezTerm with recursive submodules
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["wezterm"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.prepare.outputs.rust }}
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}
+      - name: WezTerm configuration, mux and GUI tests (settings panel, Close-Pane mouse state machine)
+        working-directory: ${{ runner.temp }}/sources/wezterm
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          env CI=yes ./get-deps
+          cargo nextest run --locked -p config -p mux -p wezterm-gui --no-fail-fast --test-threads 2
+
+  shell-windows:
+    needs: prepare
+    runs-on: windows-2025
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Checkout locked Oh My Zsh and herdr sources
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["ohmyzsh", "herdr"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.prepare.outputs.rust }}
+          targets: x86_64-pc-windows-msvc
+      - name: Native launcher tests on Windows (console Ctrl+C, path conversion, herdr configuration)
+        working-directory: ${{ runner.temp }}/sources/ohmyzsh
+        run: |
+          set -euo pipefail
+          # The launcher tests point USERPROFILE at a sandbox, where the rustup proxy finds no toolchain.
+          GX_RUSTC="$(rustc --print sysroot)/bin/rustc.exe"
+          export GX_RUSTC
+          python tests/gx_launcher.py
+      - name: Build locked herdr, Zsh and dependencies, then stage Oh My Zsh GX
+        run: |
+          set -euo pipefail
+          platform=windows-x64
+          source="$RUNNER_TEMP/sources/ohmyzsh"
+          scripts="$source/scripts"
+          work="$RUNNER_TEMP/shell-build"
+          mkdir -p "$work"
+          sha="$(git -C "$source" rev-parse HEAD)"
+          python "$scripts/gx_dependencies.py" audit --platform "$platform"
+          python "$scripts/gx_build_herdr.py" --repo "$source" --herdr-source-root "$RUNNER_TEMP/sources/herdr" \
+            --platform "$platform" --work "$work/gx-herdr-work" --cache "$work/gx-cache" --output "$work/gx-herdr"
+          python -I "$scripts/gx_release.py" verify-herdr --repo "$source" --platform "$platform" --herdr-build "$work/gx-herdr"
+          python "$scripts/gx_build_zsh.py" fetch --platform "$platform" --cache "$work/gx-cache"
+          python "$scripts/gx_build_zsh.py" build --platform "$platform" --cache "$work/gx-cache" \
+            --work "$work/gx-zsh-work" --output "$work/gx-zsh" --jobs 2
+          python "$scripts/gx_build_zsh.py" verify --platform "$platform" --build "$work/gx-zsh"
+          python "$scripts/gx_dependencies.py" fetch --platform "$platform" --cache "$work/gx-cache"
+          python "$scripts/gx_dependencies.py" verify --platform "$platform" --cache "$work/gx-cache"
+          python "$scripts/gx_dependencies.py" assemble --platform "$platform" --cache "$work/gx-cache" \
+            --herdr-build "$work/gx-herdr" --zsh-build "$work/gx-zsh" --output "$work/gx-dependencies"
+          python "$scripts/gx_package.py" stage --repo "$source" --ref "$sha" --platform "$platform" \
+            --dependencies "$work/gx-dependencies" --output "$work/ohmyzsh-stage"
+          python "$scripts/gx_package.py" verify-stage --stage "$work/ohmyzsh-stage"
+          (cd "$work/ohmyzsh-stage" && tar -cf ../stage.tar .)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage-shell-windows
+          path: ${{ runner.temp }}/shell-build/stage.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  shell-linux:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - name: Checkout locked Oh My Zsh and herdr sources
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["ohmyzsh", "herdr"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ needs.prepare.outputs.rust }}
+          targets: x86_64-unknown-linux-musl
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools cmake ninja-build zstd
+      - name: Build locked herdr, Zsh and dependencies, then stage Oh My Zsh GX
+        run: |
+          set -euo pipefail
+          platform=ubuntu-amd64
+          source="$RUNNER_TEMP/sources/ohmyzsh"
+          scripts="$source/scripts"
+          work="$RUNNER_TEMP/shell-build"
+          mkdir -p "$work"
+          sha="$(git -C "$source" rev-parse HEAD)"
+          python "$scripts/gx_dependencies.py" audit --platform "$platform"
+          python "$scripts/gx_build_herdr.py" --repo "$source" --herdr-source-root "$RUNNER_TEMP/sources/herdr" \
+            --platform "$platform" --work "$work/gx-herdr-work" --cache "$work/gx-cache" --output "$work/gx-herdr"
+          python -I "$scripts/gx_release.py" verify-herdr --repo "$source" --platform "$platform" --herdr-build "$work/gx-herdr"
+          python "$scripts/gx_build_zsh.py" fetch --platform "$platform" --cache "$work/gx-cache"
+          test -f /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          python "$scripts/gx_build_zsh.py" build --platform "$platform" --cache "$work/gx-cache" \
+            --work "$work/gx-zsh-work" --output "$work/gx-zsh" --jobs 2 --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          python "$scripts/gx_build_zsh.py" verify --platform "$platform" --build "$work/gx-zsh"
+          python "$scripts/gx_dependencies.py" fetch --platform "$platform" --cache "$work/gx-cache"
+          python "$scripts/gx_dependencies.py" verify --platform "$platform" --cache "$work/gx-cache"
+          python "$scripts/gx_dependencies.py" assemble --platform "$platform" --cache "$work/gx-cache" \
+            --herdr-build "$work/gx-herdr" --zsh-build "$work/gx-zsh" --output "$work/gx-dependencies"
+          python "$scripts/gx_package.py" stage --repo "$source" --ref "$sha" --platform "$platform" \
+            --dependencies "$work/gx-dependencies" --output "$work/ohmyzsh-stage"
+          python "$scripts/gx_package.py" verify-stage --stage "$work/ohmyzsh-stage"
+          (cd "$work/ohmyzsh-stage" && tar -cf ../stage.tar .)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage-shell-linux
+          path: ${{ runner.temp }}/shell-build/stage.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  package-windows:
+    needs: [prepare, wezterm-windows, shell-windows]
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-wezterm-windows
+          path: ${{ runner.temp }}/wezterm
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-shell-windows
+          path: ${{ runner.temp }}/shell
+      - name: Install checksum-pinned Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-7.1.0-x64.exe'
+          $destination = Join-Path $env:RUNNER_TEMP 'gx-inno'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe' -OutFile $installer
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ne '0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f') { throw 'Inno Setup checksum mismatch' }
+          $installed = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$destination`"" -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { throw "Inno Setup failed: $($installed.ExitCode)" }
+          "ISCC=$(Join-Path $destination 'ISCC.exe')" >> $env:GITHUB_ENV
+      - name: Validate coordinator lock without component checkouts
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          if sources.check("components.lock.json")["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - name: Assemble and build the GX Shell installer
+        shell: pwsh
+        env:
+          GX_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in 'wezterm', 'shell') {
+            $stage = Join-Path $env:RUNNER_TEMP "$name-stage"
+            New-Item -ItemType Directory -Force $stage | Out-Null
+            tar -xf (Join-Path $env:RUNNER_TEMP "$name/stage.tar") -C $stage
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python scripts/gx_shell_package.py assemble --platform windows --version $env:GX_VERSION `
+            --components-lock components.lock.json `
+            --wezterm-stage "$env:RUNNER_TEMP/wezterm-stage" --ohmyzsh-stage "$env:RUNNER_TEMP/shell-stage" `
+            --output "$env:RUNNER_TEMP/assembly"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/gx_shell_package.py build --assembly "$env:RUNNER_TEMP/assembly" --output dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Checkout locked Oh My Zsh smoke probe
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["ohmyzsh"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - name: Install, runtime smoke, reinstall and uninstall on this disposable runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -Path dist -Filter 'GX-Shell-*-Setup-x64.exe')
+          if ($installers.Count -ne 1) { throw 'Expected exactly one GX Shell installer' }
+          $manifest = Join-Path $PWD ("dist/" + $installers[0].Name + ".manifest.json")
+          ./scripts/gx_shell_smoke_windows.ps1 -Installer $installers[0].FullName `
+            -Evidence "$env:RUNNER_TEMP/evidence-windows" `
+            -HerdrProbe "$env:RUNNER_TEMP/sources/ohmyzsh/scripts/gx_probe_herdr.py" `
+            -ComponentsLock "$PWD/components.lock.json" -PackageManifest $manifest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-windows
+          path: ${{ runner.temp }}/evidence-windows
+          if-no-files-found: ignore
+          retention-days: 14
+
+  package-linux:
+    needs: [prepare, wezterm-linux, shell-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-wezterm-linux
+          path: ${{ runner.temp }}/wezterm
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage-shell-linux
+          path: ${{ runner.temp }}/shell
+      - name: Validate coordinator lock without component checkouts
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          if sources.check("components.lock.json")["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - name: Assemble and build the GX Shell deb
+        env:
+          GX_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          for name in wezterm shell; do
+            mkdir -p "$RUNNER_TEMP/$name-stage"
+            tar -xf "$RUNNER_TEMP/$name/stage.tar" -C "$RUNNER_TEMP/$name-stage"
+          done
+          python3 scripts/gx_shell_package.py assemble --platform linux --version "$GX_VERSION" \
+            --components-lock components.lock.json \
+            --wezterm-stage "$RUNNER_TEMP/wezterm-stage" --ohmyzsh-stage "$RUNNER_TEMP/shell-stage" \
+            --output "$RUNNER_TEMP/assembly"
+          python3 scripts/gx_shell_package.py build --assembly "$RUNNER_TEMP/assembly" --output dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  smoke-linux:
+    needs: [prepare, package-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['20.04', '24.04']
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux
+          path: dist
+      - name: Checkout locked Oh My Zsh smoke probe
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["ohmyzsh"])
+          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - name: Install, runtime smoke, reinstall and remove in a clean Ubuntu container
+        env:
+          GX_UBUNTU: ${{ matrix.ubuntu }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          docker run --rm --volume "$PWD:/workspace:ro" --volume "$RUNNER_TEMP/evidence:/evidence" \
+            --volume "$RUNNER_TEMP/sources/ohmyzsh:/sources/ohmyzsh:ro" --workdir /workspace \
+            --env GITHUB_ACTIONS=true --env DEBIAN_FRONTEND=noninteractive --env TZ=UTC \
+            --env GX_SMOKE_USER=gx-smoke --env GX_SMOKE_DIST=/workspace/dist --env GX_SMOKE_EVIDENCE=/evidence \
+            --env GX_SMOKE_HERDR_PROBE=/sources/ohmyzsh/scripts/gx_probe_herdr.py \
+            --env GX_SMOKE_COMPONENTS_LOCK=/workspace/components.lock.json \
+            "ubuntu:$GX_UBUNTU" bash -euo pipefail -c '
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates python3 procps xvfb xauth x11-apps ffmpeg
+              useradd --create-home gx-smoke
+              bash scripts/gx_shell_smoke_linux.sh
+            '
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-linux-${{ matrix.ubuntu }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: [prepare, ohmyzsh-posix, wezterm-tests, package-windows, package-linux, smoke-linux]
+    if: needs.prepare.outputs.publish == 'true' && github.repository == 'gx0404/gx_shell'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    concurrency:
+      group: gx-shell-publish-${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.14.7'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Validate coordinator lock without component checkouts
+        shell: python
+        env:
+          GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
+        run: |
+          import os
+          import sys
+          sys.path.insert(0, "scripts")
+          import gx_shell_sources as sources
+          if sources.check("components.lock.json")["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
+              raise SystemExit("Source lock differs from prepare")
+      - name: Verify both installers and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GX_VERSION: ${{ needs.prepare.outputs.version }}
+          GX_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/gx_shell_package.py version --release > /dev/null
+          python3 scripts/gx_shell_package.py verify --dir dist --version "$GX_VERSION" --sha "$GX_SHA" \
+            --components-lock components.lock.json
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GX_SHA" --jq .status)"
+          [ "$status" = identical ] || [ "$status" = behind ] || { echo "coordinator commit is no longer on main" >&2; exit 1; }
+          tag="gx-shell-v$GX_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag already exists; published releases are never overwritten." >&2
+            exit 1
+          fi
+          if ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>/dev/null)"; then
+            existing="$(jq -r .object.sha <<< "$ref")"
+            if [ "$(jq -r .object.type <<< "$ref")" = tag ]; then
+              existing="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$existing" --jq .object.sha)"
+            fi
+            if [ "$existing" != "$GX_SHA" ]; then
+              echo "Tag $tag points to $existing, not $GX_SHA; tags are never moved." >&2
+              exit 1
+            fi
+            tag_args=(--verify-tag)
+          else
+            tag_args=(--target "$GX_SHA")
+          fi
+          python3 scripts/gx_shell_package.py notes --version "$GX_VERSION" > "$RUNNER_TEMP/notes.md"
+          mapfile -t assets < <(sed 's|^[0-9a-f]\{64\}  |dist/|' dist/SHA256SUMS)
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" "${tag_args[@]}" \
+            --title "GX Shell $GX_VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+            "${assets[@]}" dist/SHA256SUMS

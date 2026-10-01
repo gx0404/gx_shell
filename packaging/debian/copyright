@@ -1,0 +1,22 @@
+GX Shell (https://github.com/gx0404/gx_shell) bundles independently licensed
+components. Their license texts are installed alongside them:
+
+ - WezTerm GX, based on WezTerm (https://github.com/wezterm/wezterm), MIT License:
+   /usr/share/doc/wezterm-gx/copyright
+   Its bundled configuration and plugins keep their own license files under:
+   /usr/share/wezterm-gx/dotfiles/
+ - Oh My Zsh GX, based on Oh My Zsh (https://github.com/ohmyzsh/ohmyzsh), MIT License:
+   /usr/share/doc/ohmyzsh-gx/licenses/ohmyzsh-LICENSE.txt
+ - herdr (https://github.com/herdrdev/herdr), Apache License 2.0, together with
+   powerlevel10k, zoxide, gitstatus, JetBrains Mono Nerd Font and other bundled
+   dependencies:
+   /usr/share/doc/ohmyzsh-gx/licenses/
+ - Zsh (https://www.zsh.org/), under its own license:
+   /usr/lib/ohmyzsh-gx/share/licenses/zsh/LICENCE
+ - Noto Sans CJK (https://github.com/notofonts/noto-cjk), copyright 2014-2019
+   Adobe (http://www.adobe.com/), SIL Open Font License 1.1:
+   /usr/share/doc/gx-shell/NotoSansCJK-OFL-1.1.txt
+
+Corresponding source for the redistributed components is published with every
+release as gx-shell_<version>_amd64-sources.tar.xz at
+https://github.com/gx0404/gx_shell/releases
