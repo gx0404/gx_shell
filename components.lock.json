@@ -9,12 +9,12 @@
     "ohmyzsh": {
       "repository": "gx0404/ohmyzsh",
       "branch": "feature/gx_ohmyzsh",
-      "revision": "333f4390747a28e83179903f928ff8e29bdeafad"
+      "revision": "03d1731aaa73473d013aaeb4c6f0f1d528e52915"
     },
     "wezterm": {
       "repository": "gx0404/wezterm",
       "branch": "feature/gx_wezterm",
-      "revision": "4b219eea6a46eab9de03444612b90766d1d0d806"
+      "revision": "48aff481885592a0e1becbe6669800e23b74e268"
     }
   }
 }
