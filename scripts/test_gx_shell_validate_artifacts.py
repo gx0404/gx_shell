@@ -452,7 +452,8 @@ class WorkflowTests(unittest.TestCase):
         return match[1]
 
     def test_dispatch_only_read_permissions_and_no_build_or_publish(self):
-        self.assertIn("workflow_dispatch:", self.text)
+        self.assertNotIn("workflow_dispatch:", self.text)
+        self.assertIn("workflow_call:", self.text)
         self.assertIn("source_run_id:", self.text)
         self.assertIn("contents: read\n  actions: read", self.text)
         for forbidden in ("contents: write", "push:", "pull_request:", "gh release", "git tag", "git push",
@@ -460,6 +461,25 @@ class WorkflowTests(unittest.TestCase):
                           "continue-on-error:", "--allow-dirty", "GITHUB_ACTIONS=true"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.text)
+
+    def test_release_dispatch_routes_source_run_id_to_validation_only(self):
+        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_call:", release)
+        self.assertIn("source_run_id:", release)
+        self.assertIn("validate-artifacts:", release)
+        validate = release[release.index("  validate-artifacts:"):release.rindex("\n  publish:")]
+        self.assertIn("if: needs.prepare.outputs.source_run_id != ''", validate)
+        self.assertIn("uses: ./.github/workflows/validate-artifacts.yml", validate)
+        self.assertIn("source_run_id: ${{ needs.prepare.outputs.source_run_id }}", validate)
+        for name in ("wezterm-windows", "wezterm-linux", "wezterm-tests", "shell-windows", "shell-linux",
+                     "ohmyzsh-posix", "package-windows", "package-linux", "smoke-linux", "verify"):
+            match = re.search(r"^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)", release, re.M | re.S)
+            self.assertIsNotNone(match, name)
+            self.assertIn("if: needs.prepare.outputs.source_run_id == ''", match[1], name)
+        self.assertIn("INPUT_PUBLISH\" != true", release)
+        self.assertIn("source run cannot be the current run", release)
+        publish = re.search(r"^  publish:\n(.*?)\Z", release, re.M | re.S).group(1)
+        self.assertIn("needs.prepare.outputs.source_run_id == ''", publish)
 
     def test_tokens_exist_only_on_download_steps_and_never_enter_container(self):
         steps = re.findall(r"^      - .*?(?=^      - |^  [a-z]|\Z)", self.text, re.M | re.S)

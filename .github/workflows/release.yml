@@ -17,6 +17,26 @@ on:
         description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
         type: boolean
         default: false
+      source_run_id:
+        description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      version:
+        description: 'X.Y.Z; leave empty to use CHANGELOG.md'
+        required: false
+        default: ''
+        type: string
+      publish:
+        description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
+        type: boolean
+        default: false
+      source_run_id:
+        description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -41,6 +61,7 @@ jobs:
       nextest: ${{ steps.sources.outputs.nextest }}
       lock_digest: ${{ steps.sources.outputs.lock_digest }}
       publish: ${{ steps.meta.outputs.publish }}
+      source_run_id: ${{ steps.meta.outputs.source_run_id }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -101,8 +122,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
           set -euo pipefail
+          source_run_id="$INPUT_SOURCE_RUN_ID"
+          if [ -n "$source_run_id" ]; then
+            [ "$source_run_id" != "$GITHUB_RUN_ID" ] || { echo "source run cannot be the current run" >&2; exit 1; }
+            [ "$INPUT_PUBLISH" != true ] || { echo "artifact validation mode never publishes; leave publish=false" >&2; exit 1; }
+          fi
           version="$(python scripts/gx_shell_package.py version)"
           sha="$(git rev-parse HEAD)"
           if [ "$GITHUB_EVENT_NAME" = push ]; then
@@ -136,6 +163,7 @@ jobs:
             echo "sha=$sha"
             echo "version=$version"
             echo "publish=$publish"
+            echo "source_run_id=$source_run_id"
           } | tee -a "$GITHUB_OUTPUT"
           python scripts/gx_shell_package.py notes --version "$version" > /dev/null
       - name: Install coordinator test runtime
@@ -152,6 +180,7 @@ jobs:
 
   ohmyzsh-posix:
     needs: [prepare, shell-linux]
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -216,6 +245,7 @@ jobs:
 
   wezterm-windows:
     needs: prepare
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: windows-2025
     timeout-minutes: 240
     env:
@@ -289,6 +319,7 @@ jobs:
 
   wezterm-linux:
     needs: prepare
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
@@ -351,6 +382,7 @@ jobs:
 
   wezterm-tests:
     needs: prepare
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -399,6 +431,7 @@ jobs:
 
   shell-windows:
     needs: prepare
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: windows-2025
     timeout-minutes: 180
     defaults:
@@ -472,6 +505,7 @@ jobs:
 
   shell-linux:
     needs: prepare
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -538,6 +572,7 @@ jobs:
 
   package-windows:
     needs: [prepare, wezterm-windows, shell-windows]
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
@@ -665,6 +700,7 @@ jobs:
 
   package-linux:
     needs: [prepare, wezterm-linux, shell-linux]
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -718,6 +754,7 @@ jobs:
 
   smoke-linux:
     needs: [prepare, package-linux]
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -777,6 +814,7 @@ jobs:
 
   verify:
     needs: [prepare, ohmyzsh-posix, wezterm-tests, package-windows, package-linux, smoke-linux]
+    if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -809,9 +847,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  validate-artifacts:
+    needs: [prepare]
+    if: needs.prepare.outputs.source_run_id != ''
+    uses: ./.github/workflows/validate-artifacts.yml
+    with:
+      source_run_id: ${{ needs.prepare.outputs.source_run_id }}
+
   publish:
     needs: [prepare, verify]
-    if: needs.prepare.outputs.publish == 'true' && github.repository == 'gx0404/gx_shell'
+    if: needs.prepare.outputs.publish == 'true' && needs.prepare.outputs.source_run_id == '' && github.repository == 'gx0404/gx_shell'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
