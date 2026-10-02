@@ -53,6 +53,9 @@
 - stage 接受 Oh My Zsh 依赖锁中 herdr 的 url 来源形态，但要求其严格绑定到
   `https://github.com/gx0404/herdr/archive/<根锁 revision>.zip`（`e043d951`）。
 - 仅本地模式允许组件和工作目录位于根仓 `.local`，CI 模式不变（`42743ccb`）。
+- 移除未使用的可复用 workflow `validate-artifacts.yml` 与 `release.yml` 中 `workflow_call` 触发器的残留；
+  根仓只保留 `release.yml`，用于 tag 发版、手动 `publish=false` 完整构建验收和手动 `source_run_id` 复验
+  （由内联的 validate-artifacts* job 执行）。`tmp-ohmyzsh-posix` 调试 workflow 的运行记录已清理。
 - 根协调仓未来以**无父初始化 commit** 建立新历史、不继承旧 subtree 合并历史的迁移计划仍为
   **独立 PENDING**，未因组件默认分支切换及 `gx` 删除而取消。它不在本轮执行范围，须在代码与
   两平台验收完成后另行授权、单独执行和验证。文档更新不执行历史重建、不打 tag、不发布。

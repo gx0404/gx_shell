@@ -167,7 +167,7 @@ scripts/gx_shell_local_build.ps1   Windows 只读资源与工具链规划
 scripts/gx_shell_stage_shell.sh    Oh My Zsh/herdr source root 的 stage 编排入口
 scripts/gx_shell_package.py   assemble / build / verify / version / notes
 scripts/gx_shell_smoke_*      两平台安装生命周期与隔离硬件 GPU 冒烟入口
-.github/workflows/release.yml 唯一的整包发布流程
+.github/workflows/release.yml 唯一的 workflow：tag 发版、手动完整构建验收、手动复验
 ```
 
 本地/复验目录契约固定为：`.local/sources/<component>/` 保存锁定 SHA 的独立 checkout，
@@ -355,6 +355,15 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
 5. 新版本标题使用 `## X.Y.Z(YYYY-MM-DD)`；`(TBD)` 会阻止发布。tag 必须为同版本 `gx-shell-vX.Y.Z`，
    发布提交必须在 `main` 上，同名 Release 不得覆盖、tag 不得移动；授权后才提交/推送/tag/发布。
    手动 `release` 的 `publish=false` 仅构建验证，不能据此声称已经发布。
+
+根仓只有 `.github/workflows/release.yml` 一个 workflow，触发器只有 `gx-shell-v*` tag push 与
+`workflow_dispatch`，没有可复用（`workflow_call`）入口。它有三种用法：
+
+- **tag 发版**：推送 `gx-shell-vX.Y.Z`，完整构建与两平台验收全部通过后发布；手动 `publish=true` 受同一套门禁约束。
+- **完整构建验收**：手动运行且 `publish=false`，执行与发版相同的构建、测试、安装生命周期与 `verify`，不发布。
+- **复验**：手动运行并传 `source_run_id=<已完成的手动 release run>`，`publish` 必须为 false。除 prepare 外只运行
+  内联的 validate-artifacts* job：不重新编译，下载该 run 的原始安装器与 DEB，以当前冒烟重做两平台安装生命周期，
+  再用 `verify` 与汇总回执校验；源 run 的根锁原始字节必须与当前根锁一致，复验永不发布。
 
 配置指纹、历史配置识别和迁移材料由 WezTerm fork 管理，并随 stage 的 `build-inputs` 提供；
 根仓不再依赖旧 monorepo 发布提交复算它们。来源锁更新后仍需对获锁 fork 的这些材料重新验收。

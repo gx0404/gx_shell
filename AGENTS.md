@@ -50,7 +50,9 @@
   本地构建根固定为当前根仓的 `.local/build/<run>`（通过 `GX_LOCAL_BUILD_ROOT` 传递），缓存和日志也必须留在
   `.local/`；herdr 回执为 `builder=local`，组装必须 `--allow-dirty`，产物带 `-local`，不得提升为可发布包。
   环境不能带 `GH_TOKEN`/`GITHUB_TOKEN`，不得伪造 CI/runner 身份。
-- **发版门禁**：只走 `.github/workflows/release.yml`；tag 必须等于根 CHANGELOG 最大 SemVer，日期
+- **发版门禁**：根仓只有 `.github/workflows/release.yml` 一个 workflow（无 `workflow_call`），三种用法：
+  推送 tag 发版；手动 `publish=false` 做完整构建验收；手动 `source_run_id` 复验已完成 run 的原始产物
+  （不重编、不发布）。发版只走它；tag 必须等于根 CHANGELOG 最大 SemVer，日期
   不能是 `(TBD)`，coordinator commit 必须在 `main` 上。来源锁、组件测试、两平台构建、PTY/nextest、
   Inno Setup 7.1、安装与 runtime smoke、两平台 provenance/散列校验都通过后才能发布；上传清单以
   `verify` 生成的 `SHA256SUMS` 为准。不覆盖已发布版本、不移动 tag；fork workflow 留在各 fork 运行。
