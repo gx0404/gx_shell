@@ -11,7 +11,9 @@ WezTerm 默认直接进入 GX Zsh（可以在设置里换成 PowerShell、WSL �
 也可以从 WezTerm 启动菜单打开。
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
-真实 `components.lock.json` 已存在；默认分支切换与外部构建链仍待验收，见「来源锁与更新」「验收与 PENDING」。
+真实 `components.lock.json` 已锁定三个默认分支并通过远端可达性校验，三个 fork 的远端 `gx` 分支已删除；
+最终锁的两平台整包 CI（run `36998777427`，publish=false）已通过，但尚未发布，硬件 GPU 等项仍未验证，
+见「来源锁与更新」「验收与 PENDING」。
 旧 Release 资产已退出下载/验收输入；既有使用与配置保护说明不代表本轮真实产品验收或旧版升级已通过。
 
 ## 安装
@@ -171,14 +173,18 @@ scripts/gx_shell_smoke_*      两平台安装生命周期与隔离硬件 GPU 冒
 本地/复验目录契约固定为：`.local/sources/<component>/` 保存锁定 SHA 的独立 checkout，
 `.local/build/<run>/` 保存编译工作目录、stage、assembly、dist、cache、日志、provenance 和回执；
 `.local/` 全目录已由根 `.gitignore` 忽略。根仓的受版本控制工作区不含组件目录；CI 可按 Git 身份契约把组件
-checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材料：herdr、ohmyzsh 仍检出 `gx`，wezterm
+checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材料：herdr、ohmyzsh 的本地 `gx` 已在
+`git switch --detach gx` 后用 `git branch -d gx` 删除（HEAD、文件与 stash 未变），wezterm
 不含独立 Git 元数据；不删除这些副本，也不能把它们或继承的父仓 HEAD 当作正式组件来源。WezTerm 的 C 依赖
 只从其独立 checkout 的 `.gitmodules` 递归初始化。fork 的开发规则、路由器、测试及 workflow 留在各 fork，
 根仓不复制它们。
 
-**组件历史边界**：本轮核对时，远端 `herdr`、`ohmyzsh`、`wezterm` 的 `gx` 相对各自默认分支分别有
-2/3/5 个独有提交，其中 herdr 两侧已分叉。正在以保留历史的合并纳入默认分支，验收后才删除 `gx`；
-不重写 fork 历史，不提前清理 refs，不删除仓外迁移副本。本次文档编辑不执行合并、分支删除或推送。
+**组件历史边界**：迁移核对时，远端 `herdr`、`ohmyzsh`、`wezterm` 的 `gx` 相对各自默认分支分别有
+2/3/5 个独有提交，其中 herdr 两侧已分叉。三个 fork 的远端 `refs/heads/gx` 已由 gx0404 于 2026-10-02
+08:40–08:42 UTC 删除，删除前分别为 herdr `1a6b9d4d13d1b547fe0e21197baeb2ac4e27bef0`、ohmyzsh
+`dde872a53c8bdd45f0d4dded809d6dbd67d0196f`、wezterm `4b219eea6a46eab9de03444612b90766d1d0d806`，
+均已确认是对应默认分支的祖先。这是提前删除：删除时整包与 GPU 验收尚未完成。不重写 fork 历史，
+不删除仓外迁移副本；文档更新不执行组件合并或分支删除。
 
 **根协调仓历史重建（独立 PENDING）**：仍保留未来以**无父初始化 commit** 建立根协调仓新历史、
 不继承旧 subtree 合并历史的迁移计划。它与组件默认分支切换及 `gx` 删除是独立事项，未被取消，也不在
@@ -199,8 +205,9 @@ checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材�
 根 coordinator SHA 与三组件 SHA 分别记录，不能再拿一个根提交代表四个仓库。锁 digest 是文件**原始字节**
 的 SHA-256；换行或 JSON 格式变化也会改变它，不在锁内写自引用 digest。
 
-真实 `components.lock.json` 已写入，不需初始化占位锁或猜测 SHA。本轮默认分支合并、来源工具与锁
-对齐后须重新校验；此前针对 `gx` 的校验只是历史证据，不能证明默认分支切换或真实产品已通过验收。
+真实 `components.lock.json` 已写入，不需初始化占位锁或猜测 SHA。默认分支合并与锁对齐后已重新校验，
+最终锁的 revision、digest 与远端校验结果见「本轮快照与当前待验证项」；此前针对 `gx` 的校验只是历史证据，
+来源校验通过也不代表真实产品已通过验收。
 
 在上述对齐完成后，从根仓运行以下 Git Bash 示例；本地与复验 checkout 固定在根仓 `.local/sources/<component>`，不使用
 仓外路径：
@@ -298,7 +305,7 @@ WezTerm 在 CI 中通过独立 checkout 的 `scripts/gx_package.py` 及其 `--st
 的 shell stage。CI 的 source roots 可以位于 `RUNNER_TEMP`；本地/复验的 source roots 只能位于
 `.local/sources/<component>`，两条 stage 链的输出、assembly、dist、cache 和日志只能位于
 `.local/build/<run>/`。`gx_shell_build.py` 将两条 stage 链串行编排，再交给根 packager；producer 的完整编译
-和一次性 runner/container 验收仍为 PENDING，不能用夹具 stage 代替真实构建。
+和一次性 runner/container 验收以 CI 实测为准，当前结果见「本轮快照与当前待验证项」；不能用夹具 stage 代替真实构建。
 
 本地 herdr 构建必须使用位于根仓 `.local/build/<run>` 下的 `GX_LOCAL_BUILD_ROOT`，记录 `builder=local`，
 环境不得含 `GH_TOKEN` / `GITHUB_TOKEN` 或伪造的 CI 身份。本地 stage 只允许 `assemble --allow-dirty`；产物名带
@@ -331,7 +338,8 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
 
 ## 发版
 
-迁移后的发布必须遵循以下门禁；这些是验收要求，**不是本次已成功运行 CI 的声明**：
+迁移后的发布必须遵循以下门禁；下列是门禁要求本身，本轮 CI 实测结果见「本轮快照与当前待验证项」，
+**发布尚未执行**：
 
 1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
    digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
@@ -371,13 +379,15 @@ Windows 在根目录可运行
 
 ### 已批准的实测路线
 
-以下均为目标，**本轮尚无真实产品验收结果**：
+以下为目标路线。最终锁 run `36998777427` 已完成路线 1 的 Windows 安装器生命周期与路线 2 的 DEB 容器验收，
+**路线 3 的硬件 GPU 仍受阻**，结果见下节：
 
 1. **GitHub-hosted Windows**：生成完整 payload，用 Inno Setup 7.1 编译安装器，再以
    `scripts/gx_shell_smoke_windows.ps1` 验证安装、使用、同版本重装、配置保护与卸载。
 2. **Ubuntu GitHub runner**：完成 Linux 构建，以 `scripts/gx_shell_smoke_linux.sh` 在 Docker 的
    Ubuntu 20.04 和 24.04 容器验证**同一个 DEB** 的安装生命周期；不在本机安装 Docker 或 WSL。
-3. **本机硬件 GPU/窗口**：新增入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 尚未实测。目标是对隔离的
+3. **本机硬件 GPU/窗口**：新增入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 的门禁仍返回
+   `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实 GPU 窗口与 runtime smoke 未验证。目标是对隔离的
    **完整 payload** 使用独立工作目录和配置做真实硬件 GPU/窗口检查，不运行安装器，不改现有用户配置、
    HKCU PATH 或字体。记录实际渲染适配器与窗口运行证据；不能只探测显卡或启动单个二进制就判定通过。
 
@@ -386,26 +396,95 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 ### 本轮快照与当前待验证项
 
-**本轮已运行的根检查**：`python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'` 运行 **152 项，145 项通过，7 项跳过**；`actionlint .github/workflows/release.yml`、`bash -n scripts/gx_shell_smoke_linux.sh`、`git diff --check` 和默认分支锁的 `sources check --require-remote` 均通过。三个 fork 已完成默认分支合并：herdr 的 CI run `36850119403` 全绿；Oh My Zsh 的来源身份更新已推送，但完整 package 测试仍有缺少 zsh 的环境 error；WezTerm 仍需随最终根产物执行整包构建。根检查和 fork CI 不等于真实整包构建、安装生命周期或 GPU runtime 通过。
+**分支与来源锁**：验证分支 `validation/default-branches-20261001` 已于 2026-10-02 快进合并到 `main`
+（`origin/main` 由 `417d677e` 前进到 `a28e71e3`），并已在本地和远端删除，之后的工作直接在 `main` 上进行。
+最终锁位于提交 `a9c7c4fd`：herdr `d36f1455e656cd12b20967357d12a8ddaeefaa04`（0.9.3）、ohmyzsh
+`e7de531bab5671853caeb8360fa495e254561f4a`、wezterm `48aff481885592a0e1becbe6669800e23b74e268`。
+`python -B scripts/gx_shell_sources.py check --lock components.lock.json` 给出 lock digest
+`31ebd95d21abf3564e6db005f3d6b95ce65bb138c783bbc3a8b266b748195ef2`；`check --require-remote` 通过。
 
+**根测试与静态检查**：本地 Windows 在 `TEMP` 指向 `.local/build/...` 时运行
+`ISCC="C:/Users/guoxi/AppData/Local/Programs/Inno Setup 7/ISCC.exe" python -m unittest discover -s scripts -p 'test_gx_shell_*.py'`，
+运行 229 项，跳过 7 项，失败 0。actionlint 1.7.12 在 `a9c7c4fd` 上检查 `.github/workflows/release.yml` 与
+`.github/workflows/validate-artifacts.yml` 通过；`bash -n scripts/gx_shell_stage_shell.sh scripts/gx_shell_smoke_linux.sh` 通过。
+
+**组件 fork**：herdr fork CI run `36993494473` 全绿：Windows nextest 5191 通过 / 24 跳过，Ubuntu 5759 通过 /
+25 跳过 / 0 失败，macOS 5509 通过 / 23 跳过。ohmyzsh 的依赖锁中 herdr 为 `d36f1455` / 0.9.3；本地
+`gx_dependencies.py audit` 两个平台均 ready，unittest 250 项中 248 通过、1 个错误（本机缺 zsh）、1 项跳过；
+该 fork 默认分支没有 CI 运行记录。wezterm fork gx-ci run `36961878641` 通过。
+
+**根 release workflow（旧锁）**：run `36993564664` 使用旧锁（HEAD `e30dc864`；herdr `b6a27411`、ohmyzsh `03d1731a`、
+wezterm `48aff481`），其中 prepare、wezterm-tests、shell-linux、wezterm-linux、ohmyzsh-posix、package-linux、
+smoke-linux（Ubuntu 20.04 与 24.04 的 DEB 安装、运行、重装、卸载）、wezterm-windows、shell-windows 成功；
+package-windows 的根单测有 8 项失败，原因是 runner 的 `TEMP` 为 8.3 短名，已由 `dd329f81` 修复。
+
+**根 release workflow（最终锁）**：run `36998777427` conclusion=success，head
+`a9c7c4fd84643f43224af88079f6cd783d471b45`，时间 2026-10-02 11:02:11Z → 12:04:04Z。成功的 job：prepare、
+wezterm-tests、wezterm-linux、shell-linux、ohmyzsh-posix、package-linux、smoke-linux (20.04)、smoke-linux (24.04)、
+wezterm-windows、shell-windows、package-windows（25m30s）、verify（21s）。publish 因 publish=false 跳过，
+validate-artifacts* 系列因不是复验模式跳过。Windows runner 上的根单测使用校验散列的 Inno Setup 7.1：
+Ran 229，OK（skipped=7）。
+
+- **产物**：Windows 安装器 `GX-Shell-0.2.0-Setup-x64.exe`，sha256
+  `1ed5dba646a28a224473eb3aebe3510c8291a82cff70e4d3efbe3b19020b3a1d`；DEB `gx-shell_0.2.0_amd64.deb`，sha256
+  `180a8ec8cc10a6617a496fb9a8717ae3dfbed360bb0a47b0bdd4481849e5c03d`。
+- **verify**：两平台 provenance 与散列校验通过。`SHA256SUMS`（artifact verified-checksums，ID 11225011907）列出
+  6 个文件：安装器、安装器 manifest、windows-x64 sources tar.xz、deb、deb manifest、amd64 sources tar.xz。
+- **其余 artifact ID**：release-windows 11224701394、release-linux 11223632339、evidence-windows 11225635031、
+  evidence-linux-20.04 11224056410、evidence-linux-24.04 11223352350。
+- **Linux DEB 冒烟**：同一个 DEB 在 GitHub Ubuntu runner 的干净 Docker 容器 Ubuntu 20.04（20.04.6 LTS）与 24.04
+  中完成安装、runtime smoke、重装与移除，均 PASS（Lua PURE_FN_TEST 635 cases）；旧版升级为 NOT_RUN。
+- **Windows 生命周期冒烟**：在一次性 GitHub-hosted runner（Windows Server 2025）上由
+  `scripts/gx_shell_smoke_windows.ps1` 执行，末行原文为
+  `PASS: GX Shell Windows installer lifecycle only; GUI images await review, desktop input/echo/redraw and hardware GPU NOT_RUN; legacy release upgrade: NOT_RUN`。
+  以下步骤依次全部通过：
+  1. 安装；
+  2. 新环境下 PATH 能解析 GX 入口；
+  3. 开始菜单快捷方式在 WezTerm GX 中打开 GX Zsh；
+  4. GX Zsh + Oh My Zsh 首次启动生成 GX 管理的 herdr 配置；
+  5. 嵌套 shell 路径、`/tmp`、passwd home、zoxide 与内置 Linux 工具；
+  6. gx-pwsh、iex、`param()` 安装脚本；
+  7. app execution alias；
+  8. herdr 包身份、受管更新与补全；
+  9. herdr server 在内置 ConPTY 上运行真实 GX Zsh pane，MSYS 与原生程序的 Ctrl+C 正常；
+  10. WezTerm 配置播种与内置字体（Lua PURE_FN_TEST ALL PASS 645 cases）；
+  11. WezTerm GUI 默认启动 GX Zsh；
+  12. 文件被占用时安装与卸载都拒绝且不删除安装，约 5.5 秒完成（此前 run `36969818934` 中的旧安装包在这一步
+      超过 45 秒超时，由 ISS 静默卸载修复解决）；
+  13. 同版本重装保留配置与完整 GX profile；
+  14. 卸载只删除自有资源、保留全部用户数据；
+  15. 二次安装后 GX Zsh、herdr、WezTerm 再次运行正常；
+  16. 再次卸载。
+- **GUI 截图**：evidence-windows 中 install、reinstall、install-again 三张截图已于 2026-10-02 由协调者人工审阅：
+  WezTerm GX 窗口正常显示标签栏（default / zsh ~）、时钟、壁纸和 GX Zsh 提示符。窗口证据中 renderer 为
+  `WebGpu software fallback`，只证明软件渲染路径；hardware GPU 和 desktop input/echo/redraw 仍为 NOT_RUN。
+
+CI 通过的是两平台构建、verify、安装生命周期与软件渲染路径；该 run 使用 publish=false，发布本身未执行。
+仍未验证：硬件 GPU 窗口（门禁仍为 `BLOCKED_UNSAFE_KNOWNFOLDERS`，`audited_wezterm_revision` 已过期）、
+桌面输入/回显/重绘、旧版 Release 升级、本地完整 Windows 构建（Perl 缺模块）；ohmyzsh fork 默认分支没有 CI 记录；
+根历史重建仍是独立 PENDING。
 
 | 项目 | 当前验收边界 |
 |---|---|
-| 根测试 / planner / workflow 静态检查 | PASS：根测试 152 项（145 通过、7 跳过）；actionlint、Linux shell syntax、diff check 通过；真实产品仍待 CI |
-| 真实来源锁与默认分支 | PASS：herdr `b6a27411f73f26ca4483b6b4134e1ed694be2aa3`、ohmyzsh `333f4390747a28e83179903f928ff8e29bdeafad`、wezterm `4b219eea6a46eab9de03444612b90766d1d0d806`；lock digest `9ea7c96db823580861ce3c6655327fb6439d49fc12213c6d4461191107237d6a`，远端可达性通过 |
-| 外部 source adapter / stage / workflow | PENDING：根 release workflow 尚未运行；herdr fork CI run `36850119403` 全绿，Oh My Zsh 完整 package 门仍受本机 zsh 缺失阻塞 |
-| Rust/MSVC/SDK、Python、Perl、.NET | PENDING：锁定 fork 的真实整包构建仍待根 release workflow |
+| 根测试 / planner / workflow 静态检查 | PASS：本地 Windows 根测试运行 229 项，跳过 7 项，失败 0；最终锁 run 的 Windows runner 根测试（校验散列的 Inno Setup 7.1）Ran 229，OK（skipped=7）；actionlint 1.7.12 与 `bash -n` 通过（见上）；旧锁 run 的 package-windows 根单测 8 项失败已由 `dd329f81` 修复 |
+| 真实来源锁与默认分支 | PASS：最终锁 herdr `d36f1455`、ohmyzsh `e7de531b`、wezterm `48aff481`（完整 SHA 与 lock digest 见上），`check` 与 `check --require-remote` 通过；验证分支已合并到 `main` 并删除 |
+| 组件 fork 自身测试 | herdr fork CI `36993494473` 全绿；wezterm fork gx-ci `36961878641` 通过；ohmyzsh 只有本地结果（audit 两平台 ready，unittest 248/250 通过、1 错误、1 跳过），默认分支没有 CI 运行记录 |
+| 外部 source adapter / stage / workflow | PASS：最终锁 run `36998777427` conclusion=success，12 个 job 成功；publish（publish=false）与 validate-artifacts*（不是复验模式）跳过。旧锁 run `36993564664` 的 package-windows 失败已修复 |
+| Rust/MSVC/SDK、Python、Perl、.NET | runner PASS：最终锁 run 的 wezterm-windows、shell-windows、wezterm-linux、shell-linux 成功。本地完整 Windows 构建未验证：Git 自带的 Perl 缺 `Locale/Maketext/Simple.pm`，按规则未自动安装工具；`gx_shell_build.py --plan --offline` 可以通过 |
 | sccache / 可选 LLD | 默认不启用；如需启用，先验证已有工具，不自动安装 |
-| Inno Setup 7.1 | PENDING：GitHub-hosted Windows 上完整 payload 的安装器编译与生命周期 |
-| Docker / Linux 工具链 | PENDING：Ubuntu GitHub runner 构建与同一 DEB 的 20.04/24.04 容器验收；不在本机安装 Docker/WSL |
-| zsh / PTY / nextest | PENDING：根整包获锁 fork 的真实运行时和 nextest 验收；herdr fork CI 已覆盖其自身门 |
-| 硬件 GPU / 窗口 | BLOCKED：WezTerm 原生 KnownFolders 路径尚未提供安全隔离契约；新入口只会拒绝执行，不以软件 fallback 代替硬件 GPU |
-| 默认分支迁移与 `gx` 清理 | PENDING：保留独有提交及 fork 历史，整包与 GPU 验收后才删除 `gx`；不删除仓外迁移副本 |
+| Inno Setup 7.1 | PASS（GitHub-hosted Windows）：package-windows 成功（25m30s），产出 `GX-Shell-0.2.0-Setup-x64.exe`；Windows Server 2025 一次性 runner 上的安装生命周期冒烟全部通过，文件被占用时安装与卸载均拒绝且不删除安装 |
+| Docker / Linux 工具链 | PASS：package-linux、smoke-linux (20.04) 与 smoke-linux (24.04) 成功；同一个 `gx-shell_0.2.0_amd64.deb` 在干净 Docker 容器 Ubuntu 20.04（20.04.6 LTS）与 24.04 中完成安装、runtime smoke、重装与移除；不在本机安装 Docker/WSL |
+| zsh / PTY / nextest | PASS（CI）：最终锁 run 的 ohmyzsh-posix、wezterm-tests 成功；Windows 冒烟中 herdr server 在内置 ConPTY 上运行真实 GX Zsh pane；herdr nextest 由其 fork CI 覆盖。本机缺 zsh |
+| verify / 发布 | verify PASS（21s）：两平台 provenance 与散列校验通过，`SHA256SUMS` 列出 6 个文件。publish 未执行（publish=false），尚未发布 |
+| 硬件 GPU / 窗口 | BLOCKED：WezTerm 原生 KnownFolders 路径尚无安全隔离契约，`scripts/gx_shell_smoke_gpu_windows.ps1` 门禁仍返回 `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实硬件 GPU 窗口与 runtime smoke 未验证；脚本中的 `audited_wezterm_revision` 仍为 `4b219eea`，相对锁定的 `48aff481` 已过期，新代码在 `clipboard_image_paste="Path"`（非默认）时会写 `%TEMP%`，尚未审计。CI 截图的 renderer 为 `WebGpu software fallback`，只证明软件渲染路径 |
+| GUI 截图 / 桌面交互 | 截图已人工审阅（见上），只覆盖软件渲染路径；桌面输入/回显/重绘为 NOT_RUN，未验证 |
+| 默认分支迁移与 `gx` 清理 | 已完成：验证分支已并入 `main`；三个 fork 的远端 `gx` 已于 2026-10-02 提前删除，删除时整包与 GPU 验收尚未完成（见「组件历史边界」）；迁移副本中 herdr、ohmyzsh 的本地 `gx` 已删除，不删除迁移副本 |
 | 根协调仓无父初始化 commit | 独立 PENDING：原迁移计划保留；不在本轮执行范围，须在代码与两平台验收完成后另行授权、单独执行和验证 |
-| 旧 Release 升级 | 不覆盖：旧资产退出验收输入，不报告为通过或 warning skip 后成功 |
+| 旧 Release 升级 | 未验证（既定设计）：两平台冒烟均为 NOT_RUN；旧资产退出验收输入，不报告为通过或 warning skip 后成功 |
 
 出现失败先保留日志、lock digest 与 stage 回执，区分工具缺失、来源不符和测试失败。不要清空用户 checkout、
-伪造 CI 环境或降低发布门禁。迁移尚未完成，最终实测结果仍待回填，本文不宣称外置架构构建、CI 或安装冒烟已通过。
+伪造 CI 环境或降低发布门禁。迁移尚未完成：最终锁 CI run `36998777427` 已通过，但使用 publish=false，发布本身
+未执行；硬件 GPU 窗口、桌面输入/回显/重绘与旧版升级仍未验证，本文不宣称发布验收已完成。
 
 ## 许可
 

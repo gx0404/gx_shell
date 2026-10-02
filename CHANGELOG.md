@@ -6,8 +6,8 @@
 
 ## 未发布（外置组件迁移）
 
-本节记录已批准的架构与迁移中的接口，不分配新版本、不改历史发布日期，也不代表构建/CI 已通过。
-真实锁已存在；默认分支切换、组件 stage 联调与发布验收完成前，不能根据旧版本的日期标题再次发布。
+本节记录已批准的架构与迁移中的接口，不分配新版本、不改历史发布日期；验收结果以本节末尾条目为准，
+本节不代表已经发布。真实锁已存在并已切到各默认分支；发布验收完成前，不能根据旧版本的日期标题再次发布。
 
 - 主仓改为协调仓：通过 `components.lock.json` 的 `schema: 1` 锁定三个 fork，
   `components[name]` 恰为 `repository`、`branch` 与完整 40 位 `revision`。仓库仍为
@@ -21,7 +21,7 @@
   浮动分支。`--require-remote` 另验 commit 存在且从各自默认分支可达；锁 digest 取原始字节。
 - 整包接口迁移到 schema 2：外部 stage → assemble → build → verify，记录锁快照/digest、
   四仓来源、构建回执与文件清单。package jobs 只消费 stage artifacts 和根打包材料；
-  缺材料、来源不符、散列或布局冲突必须拒绝，不能从根组件目录悄悄补文件。接口联调仍为 PENDING。
+  缺材料、来源不符、散列或布局冲突必须拒绝，不能从根组件目录悄悄补文件。接口联调的 CI 结果见本节验收条目。
 - 新增 Windows 本地 CPU/内存资源规划器 `scripts/gx_shell_local_build.ps1`，仅探测并输出
   JSON/环境建议，不下载、安装或构建。组件串行共享 jobs，缓存按组件 SHA、工具链和 target 隔离，
   本地/复验的源码、编译、构建、stage、assembly、dist、cache 和日志统一放在根仓 `.local/`，并由
@@ -30,18 +30,50 @@
 - 已批准的验收路线：GitHub-hosted Windows 完整安装器与安装生命周期；Ubuntu GitHub runner
   上用 Docker 的 Ubuntu 20.04/24.04 容器验证同一个 DEB；本机仅对隔离的完整 payload 做硬件
   GPU/窗口验收，不在本机安装 Docker/WSL。新增入口为 `scripts/gx_shell_smoke_gpu_windows.ps1`，
-  尚未实测；软件 fallback 只能验证软件渲染路径，不能替代硬件 GPU 验收。
+  其门禁仍返回 `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实 GPU 窗口与 runtime smoke 未验证；脚本记录的
+  `audited_wezterm_revision` 仍为 `4b219eea`，相对锁定的 `48aff481` 已过期，新代码在
+  `clipboard_image_paste="Path"`（非默认）时会写 `%TEMP%`，尚未审计。软件 fallback 只能验证软件渲染路径，
+  不能替代硬件 GPU 验收。
 - 旧 Release 资产按迁移决定退出下载与验收输入；新流程不再依赖旧安装包或旧根仓指纹 commit，
   **没有旧 Release 升级覆盖**，不以 warning skip 伪称通过。同版本重装不等于跨版本升级。
   配置指纹由 WezTerm fork 维护并随 stage 提供；安装布局和用户数据保护契约保持不变。
 - 组件分支迁移保留历史：核对时三个远端 `gx` 分别有 2/3/5 个默认分支未包含的提交，herdr 两侧
-  已分叉，正通过保留历史的合并纳入默认分支；验收后才删除 `gx`，不重写 fork 历史。根工作区不含
-  组件目录；仓外迁移副本中 herdr、ohmyzsh 仍检出 `gx`，wezterm 不是独立 Git 仓库；不删除迁移副本。
+  已分叉；不重写 fork 历史。三个 fork 的远端 `refs/heads/gx` 已由 gx0404 于 2026-10-02 08:40–08:42 UTC
+  删除，删除前为 herdr `1a6b9d4d`、ohmyzsh `dde872a5`、wezterm `4b219eea`，均已确认是对应默认分支的祖先；
+  这是提前删除，删除时整包与 GPU 验收尚未完成。根工作区不含组件目录；仓外迁移副本中 herdr、ohmyzsh 的
+  本地 `gx` 已在 `git switch --detach gx` 后用 `git branch -d gx` 删除，HEAD、文件与 stash 未变，wezterm
+  不是独立 Git 仓库；不删除迁移副本。
+- 验证分支 `validation/default-branches-20261001` 于 2026-10-02 快进合并到 `main`（`origin/main` 由
+  `417d677e` 前进到 `a28e71e3`），并已在本地和远端删除；之后的工作直接在 `main` 上进行。
+- 来源锁更新为最终锁（提交 `a9c7c4fd`）：herdr `d36f1455`（0.9.3）、ohmyzsh `e7de531b`（其依赖锁中的
+  herdr 为 `d36f1455` / 0.9.3）、wezterm `48aff481`；锁 digest
+  `31ebd95d21abf3564e6db005f3d6b95ce65bb138c783bbc3a8b266b748195ef2`，`check --require-remote` 通过。
+- 规划器路径比较兼容 8.3 短名临时目录（`dd329f81`），修复 CI run `36993564664` 中 package-windows
+  因 runner 的 `TEMP` 为 8.3 短名而出现的 8 项根单测失败。
+- stage 接受 Oh My Zsh 依赖锁中 herdr 的 url 来源形态，但要求其严格绑定到
+  `https://github.com/gx0404/herdr/archive/<根锁 revision>.zip`（`e043d951`）。
+- 仅本地模式允许组件和工作目录位于根仓 `.local`，CI 模式不变（`42743ccb`）。
 - 根协调仓未来以**无父初始化 commit** 建立新历史、不继承旧 subtree 合并历史的迁移计划仍为
   **独立 PENDING**，未因组件默认分支切换及 `gx` 删除而取消。它不在本轮执行范围，须在代码与
-  两平台验收完成后另行授权、单独执行和验证。本次文档编辑不修改 refs、不提交、不 push/tag/release。
-- 验收命令及 PENDING 项见 README。原 101 项测试、7 项跳过是历史快照，不是本轮结果；
-  本轮尚无真实产品验收结果，须在最终实测后回填。根夹具单测不能代替组件构建、安装器或两平台冒烟。
+  两平台验收完成后另行授权、单独执行和验证。文档更新不执行历史重建、不打 tag、不发布。
+- 验收命令、PENDING 项与完整数字见 README「本轮快照与当前待验证项」。原 101 项测试、7 项跳过是历史
+  快照，不是本轮结果。本轮本地 Windows 根测试运行 229 项，跳过 7 项，失败 0；actionlint 1.7.12 在
+  `a9c7c4fd` 上检查 `release.yml` 与 `validate-artifacts.yml` 通过，`bash -n` 检查
+  `gx_shell_stage_shell.sh` 与 `gx_shell_smoke_linux.sh` 通过。herdr fork CI `36993494473` 全绿，wezterm
+  fork gx-ci `36961878641` 通过；ohmyzsh 只有本地结果（`gx_dependencies.py audit` 两个平台均 ready，
+  unittest 250 项中 248 通过、1 个错误为本机缺 zsh、1 项跳过）。
+- 根 release workflow：旧锁 run `36993564664` 中 package-windows 根单测 8 项失败，已由 `dd329f81` 修复。
+  最终锁 run `36998777427`（head `a9c7c4fd`）conclusion=success，12 个 job 成功，含 package-windows、
+  package-linux、smoke-linux (20.04)、smoke-linux (24.04) 与 verify；publish 因 publish=false 跳过，
+  validate-artifacts* 因不是复验模式跳过。Windows runner 上用校验散列的 Inno Setup 7.1 跑根单测：
+  Ran 229，OK（skipped=7）。`GX-Shell-0.2.0-Setup-x64.exe` 在 Windows Server 2025 一次性 runner 上通过
+  安装生命周期冒烟；`gx-shell_0.2.0_amd64.deb` 在 Ubuntu 20.04/24.04 干净 Docker 容器中完成安装、
+  runtime smoke、重装与移除；verify 通过两平台 provenance 与散列校验。发布本身未执行。
+- 仍未验证：硬件 GPU 窗口（门禁仍为 `BLOCKED_UNSAFE_KNOWNFOLDERS`，`audited_wezterm_revision` 已过期）；
+  桌面输入/回显/重绘（GUI 截图只证明 `WebGpu software fallback` 软件渲染路径）；旧版 Release 升级
+  （既定设计）；本地完整 Windows 构建（Git 自带的 Perl 缺 `Locale/Maketext/Simple.pm`，未自动安装工具，
+  `--plan --offline` 可以通过）；ohmyzsh fork 默认分支没有 CI 记录；根历史重建仍是独立 PENDING。
+  根夹具单测不能代替组件构建、安装器或两平台冒烟。
 
 以下 0.2.0 / 0.1.0 是迁移前历史记录：其中 subtree、旧 Release 升级、指纹生成与耗时描述
 不再是新架构的操作流程或本次验收结果。保留它们用于解释既有行为，不表示旧资产仍可下载。
