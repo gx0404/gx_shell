@@ -469,8 +469,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("validate-artifacts:", release)
         validate = release[release.index("  validate-artifacts:"):release.rindex("\n  publish:")]
         self.assertIn("if: needs.prepare.outputs.source_run_id != ''", validate)
-        self.assertIn("uses: ./.github/workflows/validate-artifacts.yml", validate)
-        self.assertIn("source_run_id: ${{ needs.prepare.outputs.source_run_id }}", validate)
+        self.assertIn("SOURCE_RUN_ID: ${{ needs.prepare.outputs.source_run_id }}", validate)
+        self.assertIn("validate-artifacts-smoke-linux:", validate)
+        self.assertIn("validate-artifacts-smoke-windows:", validate)
+        self.assertIn("validate-artifacts-verify:", validate)
+        self.assertIn("ubuntu: ['20.04', '24.04']", validate)
+        self.assertIn("runs-on: windows-2025", validate)
+        self.assertIn("python scripts/gx_shell_validate_artifacts.py inspect", validate)
+        self.assertIn("python scripts/gx_shell_validate_artifacts.py download", validate)
+        self.assertIn("python scripts/gx_shell_validate_artifacts.py record", validate)
+        self.assertIn("python scripts/gx_shell_validate_artifacts.py aggregate", validate)
         for name in ("wezterm-windows", "wezterm-linux", "wezterm-tests", "shell-windows", "shell-linux",
                      "ohmyzsh-posix", "package-windows", "package-linux", "smoke-linux", "verify"):
             match = re.search(r"^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)", release, re.M | re.S)
