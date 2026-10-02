@@ -12,15 +12,14 @@ WezTerm 默认直接进入 GX Zsh（可以在设置里换成 PowerShell、WSL �
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
 真实 `components.lock.json` 已锁定三个默认分支并通过远端可达性校验，三个 fork 的远端 `gx` 分支已删除；
-最终锁的两平台整包 CI（run `36998777427`，publish=false）已通过；0.3.0 待发布，由 tag `gx-shell-v0.3.0`
-触发 release.yml 完整构建、验收并发布。硬件 GPU 等项仍未验证，见「来源锁与更新」「验收与 PENDING」。
-旧 Release 资产已退出下载/验收输入；既有使用与配置保护说明不代表本轮真实产品验收或旧版升级已通过。
+最终锁的两平台整包 CI（run `36998777427`，publish=false）已通过；0.3.0 已由 tag `gx-shell-v0.3.0` 触发
+release.yml（run `37027305037`）完整构建、验收并发布。硬件 GPU 等项仍未验证，见「来源锁与更新」「验收与 PENDING」。
+旧 Release 资产已退出下载/验收输入；既有使用与配置保护说明不代表旧版升级已通过验证。
 
 ## 安装
 
-0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布；发布后从
-[Releases](https://github.com/gx0404/gx_shell/releases) 下载。旧版本的 Release 资产已撤下，不要将旧版本说明
-理解为仍有可下载资产。包格式与安装契约保持如下：
+当前版本 0.3.0 已发布，从 [Releases](https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.3.0) 下载。
+旧版本的 Release 资产已撤下，不要将旧版本说明理解为仍有可下载资产。包格式与安装契约保持如下：
 
 | 平台 | 文件 | 安装方式 |
 |---|---|---|
@@ -339,8 +338,8 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
 
 ## 发版
 
-迁移后的发布必须遵循以下门禁；下列是门禁要求本身，本轮 CI 实测结果见「本轮快照与当前待验证项」。
-**0.3.0 待发布**，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布：
+迁移后的发布必须遵循以下门禁；下列是门禁要求本身，实测结果见「本轮快照与当前待验证项」。
+0.3.0 已由 tag `gx-shell-v0.3.0` 触发 release.yml（run `37027305037`）完整构建、验收并发布。门禁如下：
 
 1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
    digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
@@ -406,9 +405,41 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 ### 本轮快照与当前待验证项
 
-**版本**：0.2.0 曾于 2026-09-30 发布（`ee1905f12`），其 Release 与 tag 之后被删除；之后以 0.2.0 再次发布的尝试
-被 403 拦下，没有发出任何内容，因此改用 0.3.0（2026-10-02）。0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发
-release.yml 完整构建、验收并发布；CHANGELOG 的 0.3.0 段会原样成为 Release 说明，验收过程与内部记录留在本节。
+**版本**：0.2.0 曾于 2026-09-30 发布（`ee1905f12`），其 Release 与 tag 之后被删除。之后 run `37006802406`
+（#23，head `c49b7f90`）以 0.2.0 发布，在 publish 步骤被 403 拒绝：运行中途 `main` 前进，Actions token 无法在
+非最新提交上新建 tag，没有发出任何内容；因此改用 0.3.0（2026-10-02）。0.3.0 已发布，见下段。线上 Release 说明与
+`gx_shell_package.py notes` 从 CHANGELOG 的 0.3.0 段生成的内容一致，因此该段发布后不再修改；验收过程与内部记录留在本节。
+
+**0.3.0 发布记录**：发布 run `37027305037`（#25）由推送标注 tag `gx-shell-v0.3.0` 触发（tag 对象 `0d8f22c8`，
+指向 `main` 上的提交 `3320588941891c7beffb8601434c669fb0471dd5`），运行时间 2026-10-02 15:29:14Z → 16:34:54Z，
+conclusion=success。prepare、wezterm-tests、wezterm-linux、shell-linux、ohmyzsh-posix、package-linux、
+smoke-linux (20.04)、smoke-linux (24.04)、wezterm-windows、shell-windows、package-windows、verify、publish
+全部 success；validate-artifacts* 系列因不是复验模式跳过。
+
+- **Windows**（runner 镜像 `win25-vs2026/20260925.250`）：根单测（Inno Setup 7.1）Ran 229，OK（skipped=7）。
+  安装器 `GX-Shell-0.3.0-Setup-x64.exe`，sha256 `d4f925437ccd9079fd52fbf390588fead90b1266a31131e75aa63d54b25720c1`。
+  生命周期冒烟末行为
+  `PASS: GX Shell Windows installer lifecycle only; GUI images await review, desktop input/echo/redraw and hardware GPU NOT_RUN; legacy release upgrade: NOT_RUN`。
+  install、reinstall、install-again 三张截图已于 2026-10-02 由协调者人工审阅：WezTerm GX 窗口的标签栏、时钟、
+  壁纸和 GX Zsh 提示符都正常；renderer 为 `WebGpu software fallback`，只证明软件渲染路径。
+- **DEB**：`gx-shell_0.3.0_amd64.deb`，sha256 `9dbe44ce628ba44d1244fd401edd87b9dc64b76d68d44a1bdf1108b548cb6966`；
+  在 Ubuntu 20.04.6 LTS 与 24.04.5 LTS 干净容器中的生命周期冒烟均 PASS。
+- **verify 与 publish**：两者都输出
+  `VERIFIED 6 release files for GX Shell 0.3.0 (3320588941891c7beffb8601434c669fb0471dd5)`。
+- **Release**：<https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.3.0>，2026-10-02T16:34:50Z 发布，
+  标记为 Latest，非草稿；共 7 个资产，即下列 6 个文件加 `SHA256SUMS`。发布后核对，GitHub API 返回的 6 个资产
+  sha256 摘要与 `SHA256SUMS` 逐项一致。这是仓库目前唯一的 Release。
+
+0.3.0 的 `SHA256SUMS` 全文：
+
+```text
+d4f925437ccd9079fd52fbf390588fead90b1266a31131e75aa63d54b25720c1  GX-Shell-0.3.0-Setup-x64.exe
+d93e93071593822bbba4b103da108724c1ea8971a977eab77edd134f1bcb1b3f  GX-Shell-0.3.0-Setup-x64.exe.manifest.json
+7838b83f2bac96ff2638dc9ccec945b1f9d552664886fe4395d7eae170bb5aec  gx-shell_0.3.0_amd64-sources.tar.xz
+9dbe44ce628ba44d1244fd401edd87b9dc64b76d68d44a1bdf1108b548cb6966  gx-shell_0.3.0_amd64.deb
+a9d3e0b00c671dbf943d8cb4cd6737399239ccf09bb675fb50afad928972b854  gx-shell_0.3.0_amd64.deb.manifest.json
+c8ab9adf7fcd21c5f1b9f21bde65856e6cf8712caaf04a12122e887492a2eea1  gx-shell_0.3.0_windows-x64-sources.tar.xz
+```
 
 **分支与来源锁**：验证分支 `validation/default-branches-20261001` 已于 2026-10-02 快进合并到 `main`
 （`origin/main` 由 `417d677e` 前进到 `a28e71e3`），并已在本地和远端删除，之后的工作直接在 `main` 上进行。
@@ -484,7 +515,11 @@ Ran 229，OK（skipped=7）。
   WezTerm GX 窗口正常显示标签栏（default / zsh ~）、时钟、壁纸和 GX Zsh 提示符。窗口证据中 renderer 为
   `WebGpu software fallback`，只证明软件渲染路径；hardware GPU 和 desktop input/echo/redraw 仍为 NOT_RUN。
 
-CI 通过的是两平台构建、verify、安装生命周期与软件渲染路径；该 run 使用 publish=false，发布本身未执行。
+**根 release workflow（复验）**：run `37008933835`（#24，head `c142e97c`，`source_run_id=36998777427`）success，
+说明精简后的 `release.yml` 能跑通复验模式。
+
+CI 通过的是两平台构建、verify、安装生命周期与软件渲染路径；run `36998777427` 使用 publish=false，没有发布，
+0.3.0 由发布 run `37027305037` 发布（见「0.3.0 发布记录」）。
 仍未验证：硬件 GPU 窗口（门禁仍为 `BLOCKED_UNSAFE_KNOWNFOLDERS`，`audited_wezterm_revision` 已过期）、
 桌面输入/回显/重绘、旧版 Release 升级、本地完整 Windows 构建（Perl 缺模块）；ohmyzsh fork 默认分支没有 CI 记录；
 根历史重建仍是独立 PENDING。
@@ -494,13 +529,13 @@ CI 通过的是两平台构建、verify、安装生命周期与软件渲染路�
 | 根测试 / planner / workflow 静态检查 | PASS：本地 Windows 根测试运行 229 项，跳过 7 项，失败 0；最终锁 run 的 Windows runner 根测试（校验散列的 Inno Setup 7.1）Ran 229，OK（skipped=7）；actionlint 1.7.12 与 `bash -n` 通过（见上）；旧锁 run 的 package-windows 根单测 8 项失败已由 `dd329f81` 修复 |
 | 真实来源锁与默认分支 | PASS：最终锁 herdr `d36f1455`、ohmyzsh `e7de531b`、wezterm `48aff481`（完整 SHA 与 lock digest 见上），`check` 与 `check --require-remote` 通过；验证分支已合并到 `main` 并删除 |
 | 组件 fork 自身测试 | herdr fork CI `36993494473` 全绿；wezterm fork gx-ci `36961878641` 通过；ohmyzsh 只有本地结果（audit 两平台 ready，unittest 248/250 通过、1 错误、1 跳过），默认分支没有 CI 运行记录 |
-| 外部 source adapter / stage / workflow | PASS：最终锁 run `36998777427` conclusion=success，12 个 job 成功；publish（publish=false）与 validate-artifacts*（不是复验模式）跳过。旧锁 run `36993564664` 的 package-windows 失败已修复 |
+| 外部 source adapter / stage / workflow | PASS：最终锁 run `36998777427` conclusion=success，12 个 job 成功；publish（publish=false）与 validate-artifacts*（不是复验模式）跳过。复验 run `37008933835` success。发布 run `37027305037` 的 13 个 job（含 publish）全部 success。旧锁 run `36993564664` 的 package-windows 失败已修复 |
 | Rust/MSVC/SDK、Python、Perl、.NET | runner PASS：最终锁 run 的 wezterm-windows、shell-windows、wezterm-linux、shell-linux 成功。本地完整 Windows 构建未验证：Git 自带的 Perl 缺 `Locale/Maketext/Simple.pm`，按规则未自动安装工具；`gx_shell_build.py --plan --offline` 可以通过 |
 | sccache / 可选 LLD | 默认不启用；如需启用，先验证已有工具，不自动安装 |
 | Inno Setup 7.1 | PASS（GitHub-hosted Windows）：package-windows 成功（25m30s），产出 `GX-Shell-0.2.0-Setup-x64.exe`；Windows Server 2025 一次性 runner 上的安装生命周期冒烟全部通过，文件被占用时安装与卸载均拒绝且不删除安装 |
 | Docker / Linux 工具链 | PASS：package-linux、smoke-linux (20.04) 与 smoke-linux (24.04) 成功；同一个 `gx-shell_0.2.0_amd64.deb` 在干净 Docker 容器 Ubuntu 20.04（20.04.6 LTS）与 24.04 中完成安装、runtime smoke、重装与移除；不在本机安装 Docker/WSL |
 | zsh / PTY / nextest | PASS（CI）：最终锁 run 的 ohmyzsh-posix、wezterm-tests 成功；Windows 冒烟中 herdr server 在内置 ConPTY 上运行真实 GX Zsh pane；herdr nextest 由其 fork CI 覆盖。本机缺 zsh |
-| verify / 发布 | verify PASS（21s）：两平台 provenance 与散列校验通过，`SHA256SUMS` 列出 6 个文件。该 run 的 publish 未执行（publish=false）；0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布 |
+| verify / 发布 | PASS：run `36998777427` 的 verify（21s）两平台 provenance 与散列校验通过，`SHA256SUMS` 列出 6 个文件，该 run 的 publish 未执行（publish=false）。发布 run `37027305037` 的 verify 与 publish 都核对通过 6 个发布文件；0.3.0 已发布为 Latest，GitHub API 返回的资产 sha256 与 `SHA256SUMS` 逐项一致（见「0.3.0 发布记录」） |
 | 硬件 GPU / 窗口 | BLOCKED：WezTerm 原生 KnownFolders 路径尚无安全隔离契约，`scripts/gx_shell_smoke_gpu_windows.ps1` 门禁仍返回 `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实硬件 GPU 窗口与 runtime smoke 未验证；脚本中的 `audited_wezterm_revision` 仍为 `4b219eea`，相对锁定的 `48aff481` 已过期，新代码在 `clipboard_image_paste = "path"`（非默认；配置只接受小写 `inline`/`path`/`none`）时会写 `%TEMP%`，尚未审计。CI 截图的 renderer 为 `WebGpu software fallback`，只证明软件渲染路径 |
 | GUI 截图 / 桌面交互 | 截图已人工审阅（见上），只覆盖软件渲染路径；桌面输入/回显/重绘为 NOT_RUN，未验证 |
 | 默认分支迁移与 `gx` 清理 | 已完成：验证分支已并入 `main`；三个 fork 的远端 `gx` 已于 2026-10-02 提前删除，删除时整包与 GPU 验收尚未完成（见「组件历史边界」）；迁移副本中 herdr、ohmyzsh 的本地 `gx` 已删除，不删除迁移副本 |
@@ -508,9 +543,8 @@ CI 通过的是两平台构建、verify、安装生命周期与软件渲染路�
 | 旧 Release 升级 | 未验证（既定设计）：两平台冒烟均为 NOT_RUN；旧资产退出验收输入，不报告为通过或 warning skip 后成功 |
 
 出现失败先保留日志、lock digest 与 stage 回执，区分工具缺失、来源不符和测试失败。不要清空用户 checkout、
-伪造 CI 环境或降低发布门禁。迁移尚未完成：最终锁 CI run `36998777427` 已通过，但使用 publish=false，没有发布；
-0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布。硬件 GPU 窗口、桌面输入/回显/重绘
-与旧版升级仍未验证，本文不宣称发布验收已完成。
+伪造 CI 环境或降低发布门禁。0.3.0 已由发布 run `37027305037` 完整构建、验收并发布；迁移尚未完成：硬件 GPU 窗口、
+桌面输入/回显/重绘与旧版升级仍未验证，根历史重建仍是独立 PENDING，0.3.0 的发布不代表这些项已经验证。
 
 ## 许可
 
