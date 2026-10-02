@@ -444,30 +444,34 @@ class PackageAndReceiptTests(unittest.TestCase):
 class WorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.text = (ROOT / ".github/workflows/validate-artifacts.yml").read_text(encoding="utf-8")
+        cls.text = (ROOT / validation.WORKFLOW).read_text(encoding="utf-8")
+        cls.validation = cls.text[cls.text.index("\n  validate-artifacts:\n"):cls.text.index("\n  publish:\n")]
 
     def job(self, name):
-        match = re.search(r"^  " + name + r":\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)", self.text, re.M | re.S)
-        self.assertIsNotNone(match)
+        match = re.search(r"^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)", self.text, re.M | re.S)
+        self.assertIsNotNone(match, name)
         return match[1]
 
-    def test_dispatch_only_read_permissions_and_no_build_or_publish(self):
-        self.assertNotIn("workflow_dispatch:", self.text)
-        self.assertIn("workflow_call:", self.text)
-        self.assertIn("source_run_id:", self.text)
-        self.assertIn("contents: read\n  actions: read", self.text)
-        for forbidden in ("contents: write", "push:", "pull_request:", "gh release", "git tag", "git push",
-                          "cargo " , "gx_shell_build.py", "gx_shell_package.py assemble", "gx_shell_package.py build",
-                          "continue-on-error:", "--allow-dirty", "GITHUB_ACTIONS=true"):
+    def test_validation_jobs_keep_read_only_token_and_never_build_or_publish(self):
+        self.assertEqual(sorted(path.name for path in (ROOT / ".github/workflows").iterdir()), ["release.yml"])
+        self.assertIn("\npermissions:\n  contents: read\n\n", self.text)
+        self.assertEqual(self.text.count("contents: write"), 1)
+        self.assertIn("    permissions:\n      contents: write\n", self.job("publish"))
+        self.assertNotIn("permissions:", self.validation)
+        for forbidden in ("contents: write", "gh release", "git tag", "git push", "cargo ", "gx_shell_build.py",
+                          "gx_shell_package.py assemble", "gx_shell_package.py build", "continue-on-error:",
+                          "--allow-dirty", "GITHUB_ACTIONS=true"):
             with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, self.text)
+                self.assertNotIn(forbidden, self.validation)
 
     def test_release_dispatch_routes_source_run_id_to_validation_only(self):
-        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        self.assertIn("workflow_call:", release)
-        self.assertIn("source_run_id:", release)
-        self.assertIn("validate-artifacts:", release)
-        validate = release[release.index("  validate-artifacts:"):release.rindex("\n  publish:")]
+        release = self.text
+        triggers = re.search(r"^on:\n(.*?)^\S", release, re.M | re.S)[1]
+        self.assertEqual(re.findall(r"^  ([a-z_]+):", triggers, re.M), ["push", "workflow_dispatch"])
+        self.assertIn("  push:\n    tags: ['gx-shell-v*']\n", triggers)
+        self.assertNotIn("workflow_call", release)
+        self.assertIn("source_run_id:", triggers)
+        validate = self.validation
         self.assertIn("if: needs.prepare.outputs.source_run_id != ''", validate)
         self.assertIn("SOURCE_RUN_ID: ${{ needs.prepare.outputs.source_run_id }}", validate)
         self.assertIn("validate-artifacts-smoke-linux:", validate)
@@ -490,7 +494,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("needs.prepare.outputs.source_run_id == ''", publish)
 
     def test_tokens_exist_only_on_download_steps_and_never_enter_container(self):
-        steps = re.findall(r"^      - .*?(?=^      - |^  [a-z]|\Z)", self.text, re.M | re.S)
+        steps = re.findall(r"^      - .*?(?=^      - |^  [a-z]|\Z)", self.validation, re.M | re.S)
         auth = [step for step in steps if re.search(r"^          GH_TOKEN:", step, re.M)]
         self.assertEqual(len(auth), 4)
         for step in auth:
@@ -498,13 +502,13 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn("docker ", step)
             self.assertNotIn("gx_shell_sources.py checkout", step)
             self.assertNotIn("gx_shell_smoke_", step)
-        self.assertNotIn("--env GH_TOKEN", self.text)
-        self.assertNotIn("--env GITHUB_TOKEN", self.text)
-        self.assertEqual(self.text.count("persist-credentials: false"), 4)
+        self.assertNotIn("--env GH_TOKEN", self.validation)
+        self.assertNotIn("--env GITHUB_TOKEN", self.validation)
+        self.assertEqual(self.validation.count("persist-credentials: false"), 4)
 
     def test_current_smokes_use_original_packages_lock_and_locked_probe(self):
-        linux = self.job("smoke-linux")
-        windows = self.job("smoke-windows")
+        linux = self.job("validate-artifacts-smoke-linux")
+        windows = self.job("validate-artifacts-smoke-windows")
         self.assertIn("ubuntu: ['20.04', '24.04']", linux)
         self.assertIn("--platform linux", linux)
         self.assertIn("packaging/debian/smoke.Dockerfile", linux)
@@ -523,11 +527,14 @@ class WorkflowTests(unittest.TestCase):
             self.assertLess(job.index("gx_shell_validate_artifacts.py download"), job.index("gx_shell_sources.py checkout"))
 
     def test_aggregate_requires_all_smokes_and_unchanged_package_verify(self):
-        verify = self.job("verify")
-        self.assertIn("needs: [prepare, smoke-linux, smoke-windows]", verify)
-        self.assertIn("if: always()", verify)
-        self.assertIn("LINUX_RESULT: ${{ needs.smoke-linux.result }}", verify)
-        self.assertIn("WINDOWS_RESULT: ${{ needs.smoke-windows.result }}", verify)
+        verify = self.job("validate-artifacts-verify")
+        self.assertIn("needs: [prepare, validate-artifacts, validate-artifacts-smoke-linux, "
+                      "validate-artifacts-smoke-windows]", verify)
+        self.assertIn("if: always() && needs.prepare.outputs.source_run_id != ''", verify)
+        self.assertIn("VALIDATE_RESULT: ${{ needs.validate-artifacts.result }}", verify)
+        self.assertIn("LINUX_RESULT: ${{ needs.validate-artifacts-smoke-linux.result }}", verify)
+        self.assertIn("WINDOWS_RESULT: ${{ needs.validate-artifacts-smoke-windows.result }}", verify)
+        self.assertIn("('PREPARE_RESULT', 'VALIDATE_RESULT', 'LINUX_RESULT', 'WINDOWS_RESULT')", verify)
         self.assertIn("all(value == 'success' for value in results.values())", verify)
         self.assertLess(verify.index("Require both complete smoke jobs"), verify.index("Download and verify both original"))
         self.assertIn("--platform both", verify)
