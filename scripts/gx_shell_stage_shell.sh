@@ -41,6 +41,21 @@ def write_json(path, value):
         stream.write('\n')
 
 
+HERDR_REPOSITORY = 'https://github.com/gx0404/herdr'
+
+
+def require_herdr_source(pinned, revision):
+    require(pinned['revision'].lower() == revision.lower(),
+            'Oh My Zsh dependency lock herdr revision differs from components lock; update the producer, not the adapter')
+    source = pinned['source']
+    require(isinstance(source, dict) and source.get('commit') == pinned['revision']
+            and ((source.get('git_repository') == HERDR_REPOSITORY and 'url' not in source)
+                 or ('git_repository' not in source
+                     and source.get('url') == f"{HERDR_REPOSITORY}/archive/{pinned['revision']}.zip")),
+            'producer must pin the independent gx0404/herdr archive of the locked commit (Git checkout or commit '
+            'archive URL), not a coordinator source subtree, another repository or a floating ref')
+
+
 def main():
     require(sys.version_info >= (3, 10), 'Python 3.10+ is required')
     coordinator = Path(sys.argv[1])
@@ -166,11 +181,7 @@ def main():
     import gx_release as release
     dependency_lock = sources._safe_path(scripts / 'packaging/dependencies.json')
     pinned = release.load_lock(omz)['herdr']
-    require(pinned['revision'].lower() == entries['herdr']['revision'].lower(),
-            'Oh My Zsh dependency lock herdr revision differs from components lock; update the producer, not the adapter')
-    require(pinned['source'].get('git_repository') == 'https://github.com/gx0404/herdr'
-            and pinned['source'].get('commit') == pinned['revision'],
-            'producer must pin the independent herdr Git archive, not a coordinator source subtree')
+    require_herdr_source(pinned, entries['herdr']['revision'])
     zsh_lock = sources._safe_path(scripts / 'packaging/zsh-runtime-lock.json')
     require(zsh_lock.is_file(), 'missing pinned Zsh runtime lock')
     inputs = {str(path): digest(path) for path in
