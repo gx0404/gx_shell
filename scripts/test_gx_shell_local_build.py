@@ -19,6 +19,17 @@ def quote(text):
     return "'" + str(text).replace("'", "''") + "'"
 
 
+def canonical(path):
+    return os.path.normcase(os.path.realpath(path))
+
+
+def short_alias(path):
+    import ctypes
+    buffer = ctypes.create_unicode_buffer(1024)
+    length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+    return buffer.value if 0 < length < len(buffer) and "~" in buffer.value else None
+
+
 def run_ps(exe, body, overrides=None):
     env = os.environ.copy()
     for key in ("GX_BUILD_ROOT", "GX_CPU_JOBS", "GX_ZSH_JOBS", "GX_MEMORY_BUDGET_GB",
@@ -150,10 +161,10 @@ ConvertTo-Json -InputObject @($result)
                 data = self.decoded(run_ps(exe, body))
                 for key, _ in cases:
                     self.assertTrue(data[key], key)
-                self.assertEqual(os.path.normcase(data["good"]), os.path.normcase(str(base / "run-1")))
-                self.assertEqual(os.path.normcase(data["slashes"]), os.path.normcase(str(base / "run-2")))
+                self.assertEqual(canonical(data["good"]), canonical(base / "run-1"))
+                self.assertEqual(canonical(data["slashes"]), canonical(base / "run-2"))
                 defaulted = Path(data["defaulted"])
-                self.assertEqual(os.path.normcase(str(defaulted.parent)), os.path.normcase(str(base)))
+                self.assertEqual(canonical(defaulted.parent), canonical(base))
                 self.assertRegex(defaulted.name, r"^plan-\d{8}-\d{6}$")
                 self.assertFalse(defaulted.exists())
 
@@ -184,8 +195,47 @@ ConvertTo-Json -InputObject @($result)
                 data = self.decoded(run_ps(exe, body))
                 for index, value in enumerate(bad):
                     self.assertTrue(data["b{0}".format(index)], value)
-                self.assertEqual(os.path.normcase(data["good"]), os.path.normcase(str(sources / "herdr")))
-                self.assertEqual(os.path.normcase(data["deep"]), os.path.normcase(str(sources / "nested" / "herdr")))
+                self.assertEqual(canonical(data["good"]), canonical(sources / "herdr"))
+                self.assertEqual(canonical(data["deep"]), canonical(sources / "nested" / "herdr"))
+
+    def test_short_name_aliases_are_normalized_before_comparison(self):
+        long_base = os.environ.get("ProgramFiles", "")
+        alias = short_alias(long_base) if long_base else None
+        if not alias:
+            self.skipTest("no existing 8.3 short-name alias to probe")
+        absent = "gx-plan-absent-" + os.urandom(4).hex()
+        short, full = Path(alias) / absent, Path(long_base) / absent
+        self.assertFalse(full.exists())
+        build, sources = Path(".local", "build"), Path(".local", "sources")
+        accepted = {
+            "short_run": ("Get-BuildRoot " + quote(short / build / "run-1") + " $repo", full / build / "run-1"),
+            "long_run": ("Get-BuildRoot " + quote(full / build / "run-2") + " $repo", full / build / "run-2"),
+            "short_component": ("Get-ComponentRoot 'herdr' " + quote(short / sources / "herdr") + " $sources",
+                                full / sources / "herdr"),
+            "long_component": ("Get-ComponentRoot 'herdr' " + quote(full / sources / "herdr") + " $sources",
+                               full / sources / "herdr"),
+        }
+        rejected = {
+            "outside_run": "Get-BuildRoot " + quote(short / "other" / "run") + " $repo",
+            "nested_run": "Get-BuildRoot " + quote(full / build / "a" / "b") + " $repo",
+            "sibling_component": "Get-ComponentRoot 'herdr' " + quote(short / ".local" / "sources2" / "herdr") + " $sources",
+            "sources_itself": "Get-ComponentRoot 'herdr' " + quote(full / sources) + " $sources",
+        }
+        lines = ["$repo=" + quote(short), "$sources=" + quote(short / sources)]
+        lines += ["$" + key + "=(" + call + ")" for key, (call, _) in accepted.items()]
+        lines += ["$" + key + "=(& { try { $null=" + call + "; $false } catch { $true } })"
+                  for key, call in rejected.items()]
+        lines.append("[ordered]@{" + "; ".join(key + "=$" + key for key in [*accepted, *rejected])
+                     + "} | ConvertTo-Json")
+        body = functions_only() + "; ".join(lines)
+        for name, exe in HOSTS:
+            with self.subTest(host=name):
+                data = self.decoded(run_ps(exe, body))
+                for key, (_, expected) in accepted.items():
+                    self.assertNotIn("~", data[key], key)
+                    self.assertEqual(canonical(data[key]), canonical(expected), key)
+                for key in rejected:
+                    self.assertTrue(data[key], key)
 
     def test_component_identity_clean_dirty_parent_and_mismatch(self):
         body = functions_only() + """
@@ -212,7 +262,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
         reports = []
         repo = make_repo(self)
         run = repo / ".local" / "build" / "run-plan"
-        boundary = os.path.normcase(str(run)) + os.sep
+        boundary = canonical(run) + os.sep
         for name, exe in HOSTS:
             with self.subTest(host=name):
                 body = ("& " + quote(SCRIPT) + " -Format Json -BuildRoot " + quote(run)
@@ -227,11 +277,10 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 self.assertEqual(data["environment"]["RUSTUP_AUTO_INSTALL"], "0")
                 self.assertNotIn("RUSTC_WRAPPER", data["environment"])
                 paths = data["paths"]
-                self.assertEqual(os.path.normcase(paths["build_root"]), os.path.normcase(str(run)))
+                self.assertEqual(canonical(paths["build_root"]), canonical(run))
                 self.assertEqual(paths["run_name"], "run-plan")
-                self.assertEqual(os.path.normcase(paths["repo_root"]), os.path.normcase(str(repo)))
-                self.assertEqual(os.path.normcase(paths["sources_root"]),
-                                 os.path.normcase(str(repo / ".local" / "sources")))
+                self.assertEqual(canonical(paths["repo_root"]), canonical(repo))
+                self.assertEqual(canonical(paths["sources_root"]), canonical(repo / ".local" / "sources"))
                 self.assertFalse(paths["exists"])
                 self.assertEqual(paths["build_root"], data["environment"]["GX_BUILD_ROOT"])
                 self.assertEqual(paths["build_root"], data["environment"]["GX_LOCAL_BUILD_ROOT"])
@@ -239,8 +288,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 for component, sha in zip(("herdr", "ohmyzsh", "wezterm"), ("a"*40, "b"*40, "c"*40)):
                     entry = paths["components"][component]
                     self.assertEqual(entry["revision"], sha)
-                    self.assertEqual(os.path.normcase(entry["root"]),
-                                     os.path.normcase(str(repo / ".local" / "sources" / component)))
+                    self.assertEqual(canonical(entry["root"]), canonical(repo / ".local" / "sources" / component))
                     self.assertFalse(entry["source_verified"])
                     planned = entry["paths"]
                     leaf = Path(planned["cache"]).name
@@ -248,7 +296,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                     leaves.append(leaf)
                     for key in ("cache", "work", "cargo_home", "cargo_target", "sccache", "zsh", "logs"):
                         value = planned[key]
-                        self.assertTrue(os.path.normcase(value).startswith(boundary), key)
+                        self.assertTrue(canonical(value).startswith(boundary), key)
                         self.assertLessEqual(len(value), 120, key)
                     self.assertEqual(planned["cargo_home"], planned["cache"] + "\\cargo")
                     self.assertEqual(planned["cargo_target"], planned["cache"] + "\\target")
@@ -274,10 +322,10 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 data = self.decoded(run_ps(exe, body, {"GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1",
                                                        "GX_MEMORY_BUDGET_GB": "6"}))
                 paths = data["paths"]
-                self.assertEqual(os.path.normcase(paths["repo_root"]), os.path.normcase(str(repo)))
-                self.assertEqual(os.path.normcase(paths["build_root"]), os.path.normcase(str(run)))
+                self.assertEqual(canonical(paths["repo_root"]), canonical(repo))
+                self.assertEqual(canonical(paths["build_root"]), canonical(run))
                 cache = paths["components"]["herdr"]["paths"]["cache"]
-                self.assertTrue(os.path.normcase(cache).startswith(os.path.normcase(str(run)) + os.sep))
+                self.assertTrue(canonical(cache).startswith(canonical(run) + os.sep))
                 self.assertLessEqual(len(cache) + len("\\sccache"), 120)
                 self.assertFalse(run.exists())
 

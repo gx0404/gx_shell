@@ -190,7 +190,7 @@ function Get-Budget($Hardware, [string]$CpuOverride, [string]$ZshOverride, [stri
 }
 
 function Get-BuildRoot([string]$Value, [string]$Repository) {
-    $base = Join-Path $Repository '.local\build'
+    $base = [IO.Path]::GetFullPath((Join-Path $Repository '.local\build'))
     if (-not $Value) {
         $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
         $Value = Join-Path $base ('plan-' + $stamp)
@@ -223,7 +223,7 @@ function Get-ComponentRoot([string]$Name, [string]$Value, [string]$SourcesBase) 
     try { $full = [IO.Path]::GetFullPath($Value) } catch {
         Fail ($Name + ': component root must be an absolute drive path below the repository .local\sources directory.')
     }
-    $prefix = $SourcesBase.TrimEnd('\') + '\'
+    $prefix = [IO.Path]::GetFullPath($SourcesBase).TrimEnd('\') + '\'
     if ($full.Length -le $prefix.Length -or $full.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ne 0) {
         Fail ($Name + ': component roots must stay below the repository .local\sources directory.')
     }
