@@ -88,7 +88,7 @@ class ValidationWorkflowTests(unittest.TestCase):
 
     def test_nonpublish_runs_both_platform_verification(self):
         verify = self.job('verify')
-        self.assertNotRegex(verify, re.compile(r'^    if:', re.M))
+        self.assertIn("if: needs.prepare.outputs.source_run_id == ''", verify)
         self.assertIn('package-windows, package-linux, smoke-linux', verify)
         self.assertIn('pattern: release-*', verify)
         self.assertIn('python scripts/gx_shell_package.py verify --dir dist', verify)
