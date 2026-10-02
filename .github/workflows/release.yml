@@ -17,6 +17,7 @@ on:
       publish:
         description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
         type: boolean
+        required: false
         default: false
       source_run_id:
         description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
@@ -32,6 +33,7 @@ on:
       publish:
         description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
         type: boolean
+        required: false
         default: false
       source_run_id:
         description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
