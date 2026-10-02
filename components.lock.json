@@ -4,12 +4,12 @@
     "herdr": {
       "repository": "gx0404/herdr",
       "branch": "feature/gx_herdr",
-      "revision": "b6a27411f73f26ca4483b6b4134e1ed694be2aa3"
+      "revision": "d36f1455e656cd12b20967357d12a8ddaeefaa04"
     },
     "ohmyzsh": {
       "repository": "gx0404/ohmyzsh",
       "branch": "feature/gx_ohmyzsh",
-      "revision": "03d1731aaa73473d013aaeb4c6f0f1d528e52915"
+      "revision": "e7de531bab5671853caeb8360fa495e254561f4a"
     },
     "wezterm": {
       "repository": "gx0404/wezterm",
