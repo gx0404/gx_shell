@@ -10,16 +10,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'X.Y.Z; leave empty to use CHANGELOG.md'
+        description: '版本号 X.Y.Z（可选，仅作核对）：须与 CHANGELOG.md 中的版本一致；留空则直接使用 CHANGELOG.md 的版本'
         required: false
         default: ''
       publish:
-        description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
+        description: '发布：构建与两平台安装验收全部通过后，创建 GitHub Release 并打 tag gx-shell-vX.Y.Z（提交须已在 main 上，运行期间不要推送 main）'
         type: boolean
         required: false
         default: false
       source_run_id:
-        description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
+        description: '复验模式：填写一个已完成的 release run ID，不重新构建、不发布，只复验该 run 的原始产物（须不勾选发布，且来源锁与该 run 一致）'
         required: false
         default: ''
 
