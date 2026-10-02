@@ -95,12 +95,19 @@ def main():
     herdr = sources._safe_path(args.herdr_root)
     work = sources._safe_path(args.work_root)
     lock_path = sources._safe_path(args.components_lock)
+    local = bool(os.environ.get('GX_LOCAL_BUILD_ROOT'))
+    private = coordinator / '.local'
+
+    def nested(inner, outer):
+        return inner.is_relative_to(outer) and not (local and outer == coordinator and inner.is_relative_to(private))
+
     roots = (coordinator, omz, herdr)
     for index, root in enumerate(roots):
         for other in roots[index + 1:]:
-            require(not root.is_relative_to(other) and not other.is_relative_to(root),
-                    'coordinator, Oh My Zsh and herdr must be separate, non-nested Git checkouts')
-        require(not work.is_relative_to(root) and not root.is_relative_to(work),
+            require(not nested(root, other) and not nested(other, root),
+                    'coordinator, Oh My Zsh and herdr must be separate, non-nested Git checkouts '
+                    '(local runs may nest them only under the coordinator .local)')
+        require(not nested(work, root) and not root.is_relative_to(work),
                 'work-root must be outside every source checkout and cannot contain one')
     require(not work.exists(), 'work-root already exists; choose a fresh path, never reuse build/cache/stage outputs')
     require(not lock_path.is_relative_to(work), 'components lock must not be inside the new work-root')
@@ -111,7 +118,6 @@ def main():
     require(args.component_revision.lower() == entries['ohmyzsh']['revision'].lower(),
             '--component-revision differs from the components lock Oh My Zsh revision')
 
-    local = bool(os.environ.get('GX_LOCAL_BUILD_ROOT'))
     if local:
         require(os.environ.get('GITHUB_ACTIONS') != 'true', 'GX_LOCAL_BUILD_ROOT cannot be used on GitHub Actions')
         boundary = sources._safe_path(Path(os.environ['GX_LOCAL_BUILD_ROOT']))
