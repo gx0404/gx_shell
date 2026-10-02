@@ -872,7 +872,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/gx_shell_validate_artifacts.py inspect --source-run-id "${{ needs.prepare.outputs.source_run_id }}" \
-            --components-lock components.lock.json --output "$RUNNER_TEMP/validation-source"
+            --components-lock components.lock.json --output "$RUNNER_TEMP/validation-source" --github-output
       - uses: actions/upload-artifact@v7
         if: always()
         with:
