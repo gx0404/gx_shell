@@ -7,20 +7,6 @@ name: release
 on:
   push:
     tags: ['gx-shell-v*']
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'X.Y.Z; leave empty to use CHANGELOG.md'
-        required: false
-        default: ''
-      publish:
-        description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
-        type: boolean
-        default: false
-      source_run_id:
-        description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
-        required: false
-        default: ''
   workflow_call:
     inputs:
       version:
@@ -37,6 +23,20 @@ on:
         required: false
         default: ''
         type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'X.Y.Z; leave empty to use CHANGELOG.md'
+        required: false
+        default: ''
+      publish:
+        description: 'Create the GitHub Release and tag gx-shell-vX.Y.Z'
+        type: boolean
+        default: false
+      source_run_id:
+        description: 'Validate artifacts from this completed release run instead of building (requires publish=false)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
