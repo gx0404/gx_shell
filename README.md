@@ -12,14 +12,15 @@ WezTerm 默认直接进入 GX Zsh（可以在设置里换成 PowerShell、WSL �
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
 真实 `components.lock.json` 已锁定三个默认分支并通过远端可达性校验，三个 fork 的远端 `gx` 分支已删除；
-最终锁的两平台整包 CI（run `36998777427`，publish=false）已通过，但尚未发布，硬件 GPU 等项仍未验证，
-见「来源锁与更新」「验收与 PENDING」。
+最终锁的两平台整包 CI（run `36998777427`，publish=false）已通过；0.3.0 待发布，由 tag `gx-shell-v0.3.0`
+触发 release.yml 完整构建、验收并发布。硬件 GPU 等项仍未验证，见「来源锁与更新」「验收与 PENDING」。
 旧 Release 资产已退出下载/验收输入；既有使用与配置保护说明不代表本轮真实产品验收或旧版升级已通过。
 
 ## 安装
 
-新架构产物完成验收并发布后，从 [Releases](https://github.com/gx0404/gx_shell/releases) 下载；
-迁移期间不要将旧版本说明理解为仍有可下载资产。包格式与安装契约保持如下：
+0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布；发布后从
+[Releases](https://github.com/gx0404/gx_shell/releases) 下载。旧版本的 Release 资产已撤下，不要将旧版本说明
+理解为仍有可下载资产。包格式与安装契约保持如下：
 
 | 平台 | 文件 | 安装方式 |
 |---|---|---|
@@ -338,8 +339,8 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
 
 ## 发版
 
-迁移后的发布必须遵循以下门禁；下列是门禁要求本身，本轮 CI 实测结果见「本轮快照与当前待验证项」，
-**发布尚未执行**：
+迁移后的发布必须遵循以下门禁；下列是门禁要求本身，本轮 CI 实测结果见「本轮快照与当前待验证项」。
+**0.3.0 待发布**，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布：
 
 1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
    digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
@@ -370,7 +371,7 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
 
 ## 验收与 PENDING
 
-根目录安全可运行的验收入口（夹具测试不是完整产品构建）：
+根目录安全可运行的验收入口（夹具测试不是完整产品构建，根夹具单测也不能代替组件构建、安装器或两平台冒烟）：
 
 ```bash
 python -m unittest discover -s scripts -p 'test_gx_shell_*.py'
@@ -405,6 +406,10 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 ### 本轮快照与当前待验证项
 
+**版本**：0.2.0 曾于 2026-09-30 发布（`ee1905f12`），其 Release 与 tag 之后被删除；之后以 0.2.0 再次发布的尝试
+被 403 拦下，没有发出任何内容，因此改用 0.3.0（2026-10-02）。0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发
+release.yml 完整构建、验收并发布；CHANGELOG 的 0.3.0 段会原样成为 Release 说明，验收过程与内部记录留在本节。
+
 **分支与来源锁**：验证分支 `validation/default-branches-20261001` 已于 2026-10-02 快进合并到 `main`
 （`origin/main` 由 `417d677e` 前进到 `a28e71e3`），并已在本地和远端删除，之后的工作直接在 `main` 上进行。
 最终锁位于提交 `a9c7c4fd`：herdr `d36f1455e656cd12b20967357d12a8ddaeefaa04`（0.9.3）、ohmyzsh
@@ -416,6 +421,17 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 `ISCC="C:/Users/guoxi/AppData/Local/Programs/Inno Setup 7/ISCC.exe" python -m unittest discover -s scripts -p 'test_gx_shell_*.py'`，
 运行 229 项，跳过 7 项，失败 0。actionlint 1.7.12 在 `a9c7c4fd` 上检查 `.github/workflows/release.yml` 与
 `.github/workflows/validate-artifacts.yml` 通过；`bash -n scripts/gx_shell_stage_shell.sh scripts/gx_shell_smoke_linux.sh` 通过。
+`validate-artifacts.yml` 之后由 `94d6e63f` 移除；actionlint 1.7.12 在 `c142e97c` 上检查剩下的唯一 workflow
+`.github/workflows/release.yml` 通过。定版 0.3.0 时在 `c142e97c` 上（定版提交只改文档）用同一命令再跑一次，
+`TEMP`/`TMP` 设为 `.local/build/t030`：Ran 229，OK（skipped=7）。`TEMP` 路径过长时（例如
+`.local/build/unittest-0.3.0-20261002-231930/tmp`），`test_gx_shell_local_build` 中 4 项 planner 用例会因 120 字符
+路径预算失败，应选短的运行目录名。历史 101 项测试、7 项跳过是迁移前快照，不是本轮结果。
+
+**根仓修复与清理**：`dd329f81` 让规划器的路径比较兼容 8.3 短名临时目录。`e043d951` 让 stage 接受 Oh My Zsh
+依赖锁中 herdr 的 url 来源形态，但要求它严格绑定到 `https://github.com/gx0404/herdr/archive/<根锁 revision>.zip`。
+`42743ccb` 只在本地模式允许组件和工作目录位于根仓 `.local`，CI 模式不变。`94d6e63f` 移除未使用的可复用 workflow
+`validate-artifacts.yml` 与 `release.yml` 中 `workflow_call` 触发器的残留，复验由 `release.yml` 内联的
+validate-artifacts* job 执行；`tmp-ohmyzsh-posix` 调试 workflow 的运行记录已清理。
 
 **组件 fork**：herdr fork CI run `36993494473` 全绿：Windows nextest 5191 通过 / 24 跳过，Ubuntu 5759 通过 /
 25 跳过 / 0 失败，macOS 5509 通过 / 23 跳过。ohmyzsh 的依赖锁中 herdr 为 `d36f1455` / 0.9.3；本地
@@ -484,16 +500,17 @@ CI 通过的是两平台构建、verify、安装生命周期与软件渲染路�
 | Inno Setup 7.1 | PASS（GitHub-hosted Windows）：package-windows 成功（25m30s），产出 `GX-Shell-0.2.0-Setup-x64.exe`；Windows Server 2025 一次性 runner 上的安装生命周期冒烟全部通过，文件被占用时安装与卸载均拒绝且不删除安装 |
 | Docker / Linux 工具链 | PASS：package-linux、smoke-linux (20.04) 与 smoke-linux (24.04) 成功；同一个 `gx-shell_0.2.0_amd64.deb` 在干净 Docker 容器 Ubuntu 20.04（20.04.6 LTS）与 24.04 中完成安装、runtime smoke、重装与移除；不在本机安装 Docker/WSL |
 | zsh / PTY / nextest | PASS（CI）：最终锁 run 的 ohmyzsh-posix、wezterm-tests 成功；Windows 冒烟中 herdr server 在内置 ConPTY 上运行真实 GX Zsh pane；herdr nextest 由其 fork CI 覆盖。本机缺 zsh |
-| verify / 发布 | verify PASS（21s）：两平台 provenance 与散列校验通过，`SHA256SUMS` 列出 6 个文件。publish 未执行（publish=false），尚未发布 |
-| 硬件 GPU / 窗口 | BLOCKED：WezTerm 原生 KnownFolders 路径尚无安全隔离契约，`scripts/gx_shell_smoke_gpu_windows.ps1` 门禁仍返回 `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实硬件 GPU 窗口与 runtime smoke 未验证；脚本中的 `audited_wezterm_revision` 仍为 `4b219eea`，相对锁定的 `48aff481` 已过期，新代码在 `clipboard_image_paste="Path"`（非默认）时会写 `%TEMP%`，尚未审计。CI 截图的 renderer 为 `WebGpu software fallback`，只证明软件渲染路径 |
+| verify / 发布 | verify PASS（21s）：两平台 provenance 与散列校验通过，`SHA256SUMS` 列出 6 个文件。该 run 的 publish 未执行（publish=false）；0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布 |
+| 硬件 GPU / 窗口 | BLOCKED：WezTerm 原生 KnownFolders 路径尚无安全隔离契约，`scripts/gx_shell_smoke_gpu_windows.ps1` 门禁仍返回 `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实硬件 GPU 窗口与 runtime smoke 未验证；脚本中的 `audited_wezterm_revision` 仍为 `4b219eea`，相对锁定的 `48aff481` 已过期，新代码在 `clipboard_image_paste = "path"`（非默认；配置只接受小写 `inline`/`path`/`none`）时会写 `%TEMP%`，尚未审计。CI 截图的 renderer 为 `WebGpu software fallback`，只证明软件渲染路径 |
 | GUI 截图 / 桌面交互 | 截图已人工审阅（见上），只覆盖软件渲染路径；桌面输入/回显/重绘为 NOT_RUN，未验证 |
 | 默认分支迁移与 `gx` 清理 | 已完成：验证分支已并入 `main`；三个 fork 的远端 `gx` 已于 2026-10-02 提前删除，删除时整包与 GPU 验收尚未完成（见「组件历史边界」）；迁移副本中 herdr、ohmyzsh 的本地 `gx` 已删除，不删除迁移副本 |
 | 根协调仓无父初始化 commit | 独立 PENDING：原迁移计划保留；不在本轮执行范围，须在代码与两平台验收完成后另行授权、单独执行和验证 |
 | 旧 Release 升级 | 未验证（既定设计）：两平台冒烟均为 NOT_RUN；旧资产退出验收输入，不报告为通过或 warning skip 后成功 |
 
 出现失败先保留日志、lock digest 与 stage 回执，区分工具缺失、来源不符和测试失败。不要清空用户 checkout、
-伪造 CI 环境或降低发布门禁。迁移尚未完成：最终锁 CI run `36998777427` 已通过，但使用 publish=false，发布本身
-未执行；硬件 GPU 窗口、桌面输入/回显/重绘与旧版升级仍未验证，本文不宣称发布验收已完成。
+伪造 CI 环境或降低发布门禁。迁移尚未完成：最终锁 CI run `36998777427` 已通过，但使用 publish=false，没有发布；
+0.3.0 待发布，由 tag `gx-shell-v0.3.0` 触发 release.yml 完整构建、验收并发布。硬件 GPU 窗口、桌面输入/回显/重绘
+与旧版升级仍未验证，本文不宣称发布验收已完成。
 
 ## 许可
 
