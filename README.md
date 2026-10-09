@@ -2,54 +2,60 @@
 
 一个协调仓锁定三个独立 fork，一次发版产出 Windows EXE 与 Ubuntu DEB，安装后提供：
 
-- **WezTerm GX**：GPU 加速终端（fork 自 [wezterm](https://github.com/wezterm/wezterm)），带配置、插件、壁纸和字体。
+- **Ghostty GX**：终端（fork 自 [ghostty](https://github.com/ghostty-org/ghostty)，仓库 `gx0404/gx_ghostty`），
+  Windows 上是原生应用（OpenGL 4.3，驱动达不到时用随包 Mesa 软件渲染），Ubuntu 上是 GTK 4 应用，带主题和字体。
 - **GX Zsh**：独立 profile 的 Oh My Zsh + powerlevel10k（fork 自 [ohmyzsh](https://github.com/ohmyzsh/ohmyzsh)），
   Windows 上自带私有 MSYS2 与打过中文路径补丁的 Zsh 5.9.2。
 - **herdr**：面向 AI 编码代理的终端工作区管理器（fork 自 [herdr](https://github.com/herdrdev/herdr)）。
 
-WezTerm 默认直接进入 GX Zsh（可以在设置里换成 PowerShell、WSL 等，见「默认 Shell」），herdr 可以在 GX Zsh 里运行，
-也可以从 WezTerm 启动菜单打开。
+Windows 上 Ghostty GX 默认进入 GX Zsh，Ubuntu 上用 `ghostty-gx -e gx-zsh` 打开（见「默认 Shell」）；herdr 在 GX Zsh
+里运行。0.3.0 及以前随包的 WezTerm GX 从 0.4.0 起移除，变化见 CHANGELOG 的 0.4.0 段。
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
-真实 `components.lock.json` 已锁定三个默认分支并通过远端可达性校验，三个 fork 的远端 `gx` 分支已删除；
-最终锁的两平台整包 CI（run `36998777427`，publish=false）已通过；0.3.0 已由 tag `gx-shell-v0.3.0` 触发
-release.yml（run `37027305037`）完整构建、验收并发布。硬件 GPU 等项仍未验证，见「来源锁与更新」「验收与 PENDING」。
-旧 Release 资产已退出下载/验收输入；既有使用与配置保护说明不代表旧版升级已通过验证。
+0.3.0 已由 tag `gx-shell-v0.3.0` 触发 release.yml（run `37027305037`）完整构建、验收并发布。0.4.0（TBD）用 Ghostty GX
+取代 WezTerm GX：代码与安装器已改完，但来源锁中 `gx_ghostty` 的修订还是占位，要等 gx_ghostty 发布后换成正式修订
+才能跑 CI 整包验收，见「来源锁与更新」「本轮快照与当前待验证项」。硬件 GPU、桌面交互与旧版升级仍未验证。
 
 ## 安装
 
-当前版本 0.3.0 已发布，从 [Releases](https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.3.0) 下载。
-旧版本的 Release 资产已撤下，不要将旧版本说明理解为仍有可下载资产。包格式与安装契约保持如下：
+已发布的最新版本是 0.3.0（随包 WezTerm GX），从 [Releases](https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.3.0)
+下载；下文描述开发中的 0.4.0（TBD）。旧版本的 Release 资产已撤下，不要将旧版本说明理解为仍有可下载资产。
+包格式与安装契约如下：
 
 | 平台 | 文件 | 安装方式 |
 |---|---|---|
 | Windows 10 1809+ x64（不支持 ARM64） | `GX-Shell-<版本>-Setup-x64.exe` | 双击运行。按用户安装到 `%LOCALAPPDATA%\Programs\GXShell`，不需要管理员。安装包未签名，SmartScreen 提示时选「更多信息 → 仍要运行」。 |
-| Ubuntu 20.04 / 24.04 amd64 | `gx-shell_<版本>_amd64.deb` | `sudo apt install ./gx-shell_<版本>_amd64.deb` |
+| Ubuntu 24.04 及更新版本 amd64 | `gx-shell_<版本>_amd64.deb` | `sudo apt install ./gx-shell_<版本>_amd64.deb` |
 
-`SHA256SUMS` 可校验全部文件；`*-sources.tar.xz` 是再分发组件（MSYS2、Zsh 等）的对应源码，普通使用不需要下载。
+0.4.0 起 DEB 不再支持 Ubuntu 20.04 与 22.04：Ghostty GX 需要 GTK 4.14 与 libadwaita 1.5。`SHA256SUMS` 可校验全部
+文件；`*-sources.tar.xz` 是再分发组件（MSYS2、Zsh 等）的对应源码，普通使用不需要下载。
 
 装好后：
 
-- Windows：开始菜单有「WezTerm GX」「GX Zsh」（「GX Zsh」在 WezTerm GX 窗口里打开）；新开的终端里可以直接运行
-  `gx-zsh`、`herdr`。
-- Ubuntu：应用菜单有「WezTerm GX」；命令行有 `gx-zsh`、`herdr`、`wezterm-gx`（CLI）、`wezterm-gx-gui`。
+- Windows：开始菜单有「Ghostty GX」「GX Zsh」，可选桌面快捷方式「Ghostty GX」。「Ghostty GX」默认进入 GX Zsh，
+  「GX Zsh」总在第一个标签页运行 GX Zsh；新开的终端里可以直接运行 `gx-zsh`、`herdr`，`ghostty` 经 `App Paths`
+  指向随包的 Ghostty GX。
+- Ubuntu：应用菜单有「Ghostty GX」；命令行有 `gx-zsh`、`herdr`、`ghostty-gx`。
 
 用户数据的位置（卸载时都会保留）：
 
 | 内容 | Windows | Ubuntu |
 |---|---|---|
-| WezTerm 配置 | `%USERPROFILE%\.config\wezterm` | `~/.config/wezterm` |
-| WezTerm 设置页的选择（语言、默认 Shell、壁纸等） | 配置目录里的 `gui-settings.json` | 同左 |
-| WezTerm 配置升级的备份与日志 | `%APPDATA%\wezterm-gx\` 下的 `backups\` 与 `config-migration.log` | `~/.local/share/wezterm-gx/` 下同名 |
-| WezTerm 插件 | `%APPDATA%\wezterm\plugins` | `~/.local/share/wezterm/plugins` |
+| Ghostty GX 配置（`config.ghostty`，设置界面保存的 `gui-settings.ghostty`） | `%LOCALAPPDATA%\ghostty\` | `~/.config/ghostty/` |
+| Ghostty GX 日志 | `%LOCALAPPDATA%\ghostty\logs\ghostty.log`（上一次的为 `ghostty.log.1`） | 不写日志文件，输出到标准错误 |
 | GX Zsh profile（`.zshrc`、历史、缓存） | `%LOCALAPPDATA%\ohmyzsh-gx\profile` | `~/.config/ohmyzsh-gx/profile` |
 | GX Zsh 里的 herdr 配置 | `<profile>\herdr\config.toml` | `<profile>/herdr/config.toml` |
+| 0.3.0 及以前 WezTerm GX 留下的配置、插件、备份与日志 | `%USERPROFILE%\.config\wezterm`、`%APPDATA%\wezterm`、`%APPDATA%\wezterm-gx` | `~/.config/wezterm`、`~/.local/share/wezterm`、`~/.local/share/wezterm-gx` |
+
+最后一行的内容 GX Shell 不读取、不迁移，也不删除；不再需要时自行删除。设了 `XDG_CONFIG_HOME` 时 Ghostty GX 的配置
+改在 `$XDG_CONFIG_HOME/ghostty/`。
 
 ## 历史差异：GX Shell 0.1.0 → 0.2.0
 
 以下保留迁移前的行为变化，供已有安装用户核对；旧 Release 资产不再作为验收输入，
 **这些说明不代表外置架构已验证从 0.1.0 升级**。安装布局与用户数据保护要求继续保留。
-其中路径、`/tmp`、ssh、PowerShell 与命令行工具几条只涉及 Windows：
+其中路径、`/tmp`、ssh、PowerShell 与命令行工具几条只涉及 Windows；WezTerm GX 的键位、配置文件、默认 Shell 设置
+与开始菜单几条只适用于 0.3.0 及以前（0.4.0 起 GX Shell 不再包含 WezTerm GX）：
 
 - **先停掉正在运行的程序**：先运行 `herdr server stop`（窗口关掉后 herdr 的后台 server 仍在运行），再关闭所有
   WezTerm GX 窗口和 GX Zsh。Windows 安装程序遇到被占用的文件会拒绝继续，但不会替你结束进程。
@@ -88,65 +94,44 @@ release.yml（run `37027305037`）完整构建、验收并发布。硬件 GPU �
 
 ## 从单独安装的旧版本迁移
 
-- **旧安装包会被替换**：Windows 安装程序会先卸载按用户安装的 WezTerm GX / Oh My Zsh GX / Herdr GX
-  （为所有用户安装的 WezTerm GX 需要你在「设置 → 应用」里手动卸载）；Ubuntu 上 `gx-shell` 会自动替换
-  `wezterm-gx`、`ohmyzsh-gx`、`herdr-gx` 包。
-- **WezTerm 配置**：新版第一次启动时按文件升级。与 WezTerm GX 0.3.0 或 GX Shell 0.1.0 发布内容相同的文件（文本
-  不计 CRLF 与 LF 的差别）先备份到 `%APPDATA%\wezterm-gx\backups\<时间戳>\wezterm-config\`（Ubuntu 为
-  `~/.local/share/wezterm-gx/backups/...`）再换新；新增文件补上（`wezterm.lua` 不是 GX 发布的原样时只补新代码用到的），
-  删掉的已发布文件（如在壁纸浮层删除的壁纸）不补回，新代码用到时除外；`gui-settings.json` 不动。改过的文件、只读
-  文件和符号链接保留，与它有 require 关系、本次也更新的文件一起留在旧版；只改了各版本都没变过的文件（如
-  `wezterm.lua` 里的日期格式）不影响其他文件升级。每个文件的结果和原因写在 `%APPDATA%\wezterm-gx\config-migration.log`
-  （Ubuntu 为 `~/.local/share/wezterm-gx/config-migration.log`），保留的文件会注明新版在安装目录里的位置。想用新默认值，
-  参照安装目录里的 `wezterm\resources\dotfiles\wezterm-config`（Ubuntu 为 `/usr/share/wezterm-gx/dotfiles/wezterm-config`）
-  手工合并：把改过的文件换成新版，下次启动会自动补齐留在旧版的文件；合并后仍保留自己改动的文件还算改过，留在旧版的
-  文件要从同一目录手工复制。也可以备份后删除 `~/.config/wezterm`（Windows 为 `%USERPROFILE%\.config\wezterm`；只留下
-  `gui-settings.json` 也行），再启动一次 WezTerm GX 重新生成。
+- **旧安装包会被替换**：Windows 安装程序会先卸载按用户安装的 Oh My Zsh GX / Herdr GX；Ubuntu 上 `gx-shell` 会自动
+  替换 `ohmyzsh-gx`、`herdr-gx` 包。
+- **WezTerm GX**：0.4.0 起 GX Shell 不再包含它，也不再把单独安装的 WezTerm GX 当作旧组件卸载或替换，两者可以共存。
+  Windows 上从 0.3.0 及以前升级时，安装程序删除旧版自带的 WezTerm GX 程序（安装目录下的 `wezterm`），以及仍指向它的
+  「WezTerm GX」开始菜单与桌面快捷方式和 `App Paths\wezterm-gx.exe`；指向别处（例如单独安装的 WezTerm GX）的同名
+  快捷方式与登记保留，卸载 GX Shell 时也保留。Ubuntu 上升级由 dpkg 删除旧版的 `/usr/lib/wezterm-gx`、
+  `/usr/share/wezterm-gx` 与 `wezterm-gx`、`wezterm-gx-gui` 命令。两个平台都保留 WezTerm 的配置与数据（见「安装」
+  的用户数据表），Ghostty GX 不读取它们，WezTerm 的键位、壁纸与插件没有迁移。
 - **旧 Oh My Zsh GX 用户**：旧 profile 里由 Oh My Zsh GX 生成的 `herdr/config.toml` 记着旧安装目录下的 zsh 路径，
   第一次启动 `gx-zsh` 或 `herdr` 时会自动改到新位置，并由 GX 接管（见上一节「herdr 配置」）。自己改过其中
   `default_shell` 或 `shell_mode` 的文件不会被改动：需要的话手动改路径，或者删掉它，下次启动会按新位置重新生成。
 - **herdr 的配置与会话**：通过 `herdr` 命令启动时读取上表中 GX Zsh profile 里的 `herdr/config.toml`，而不是
   单独安装 herdr 时的 `%APPDATA%\herdr` / `~/.config/herdr`，需要的话把旧配置复制过去；会话名默认为
   `ohmyzsh-gx`，要回到单独安装时的默认会话，用 `HERDR_SESSION=default herdr`。
-- **Windows on ARM**：WezTerm GX 0.3.0 可以借 x64 仿真装在 ARM64 上；GX Shell 与 Oh My Zsh GX 一样只支持 x64 Windows，
-  因为内置的 MSYS2 运行时没有在 ARM64 上验证过。
+- **Windows on ARM**：GX Shell 与 Oh My Zsh GX 一样只支持 x64 Windows，因为内置的 MSYS2 运行时没有在 ARM64 上
+  验证过。
 - 升级方式是安装新版本的安装包（Windows 沿用原来的安装目录）；`herdr update` 在包内被禁用。
 
 ## 默认 Shell
 
-WezTerm GX 新开的标签默认进入 GX Zsh，也可以换成本机的其他 Shell：Windows 上有 PowerShell 7（含应用商店版）、
-Windows PowerShell 5.1、cmd、Git Bash、MSYS2 UCRT64、Nushell 和各个 WSL 发行版，Ubuntu 上有系统的 Zsh 与 Bash。
-列表只含本机找到的 Shell（只检查文件是否存在；WSL 发行版列表每个 WezTerm 进程只向 `wsl.exe` 查一次）。
-在设置的「Shell」分区里选：
+- **Windows**：开始菜单的「Ghostty GX」不带参数启动 Ghostty GX（安装目录下的 `ghostty\ghostty.exe`），它在安装目录的
+  `bin\gx-zsh.exe` 找到 GX Zsh 并默认进入它；「GX Zsh」快捷方式运行 `ghostty.exe -e "<安装目录>\bin\gx-zsh.exe"`，第一个标签页
+  总是 GX Zsh，之后新开的标签页按 Ghostty GX 的配置。要换成别的 Shell，在 Ghostty GX 的配置文件里设置 `command`
+  （写法见 Ghostty 文档）；「GX Zsh」快捷方式不受影响。
+- **Ubuntu**：用 `ghostty-gx -e gx-zsh` 在 Ghostty GX 里打开 GX Zsh。想让 Ghostty GX 默认进入 GX Zsh，在
+  `~/.config/ghostty/config.ghostty` 里写一行 `command = /usr/bin/gx-zsh`。
 
-- 设置用 `Leader s` 打开（Leader 是 `Ctrl+Shift+Space`，先按它再按 `s`），再切到「Shell」分区；
-- 主菜单（标签栏右端的 `☰`，或 `Leader m`）和标签栏空白处右键菜单里的「默认 Shell…」、标签栏 `+` 按钮右键列表的
-  最后一项「设为默认 Shell…」都直接打开这个分区，命令面板（`F2`）里也能搜到「默认 Shell…」；
-- 想用自己的按键打开它，在 WezTerm 配置里绑定 `wezterm.action.ShowDefaultShellSettings`。
-
-选中后新开的标签立即使用它，`+` 按钮右键列表里它会标上「（默认）」。选择保存在配置目录的 `gui-settings.json`
-（`default_shell` 键，选回 GX Zsh 即删除这个键），不改动你的 Lua 配置；所选 Shell 以后不可用时，依次回退到 GX Zsh、
-PowerShell 7、Windows PowerShell 5.1（Ubuntu 为 GX Zsh、Zsh）。新装的 WSL 发行版一般要重启 WezTerm GX 才会出现在
-列表里。改过 `config/launch.lua` 的话，升级时它会保留旧版，「Shell」分区会提示没有可选的 Shell，按上文「WezTerm 配置」
-的办法合并新版即可。
-
-安装包里的 herdr 会跟着改：之后 herdr 新开的窗格使用同一个 Shell（已开的窗格不变，正在运行的 herdr server 会自动
-重载配置），系统通知会说明 herdr 实际用的是什么。herdr 只接受一个可执行文件，所以有两处与 WezTerm 不完全一致：
-
-- 选 WSL 发行版时，herdr 进入 WSL 的默认发行版，不能指定发行版；
-- 选 MSYS2 UCRT64 时，herdr 得到的是 MSYS 环境的 bash，不是 UCRT64 环境。
-
-Ubuntu 上选系统 Zsh 时，herdr 改用 GX Zsh（herdr 里的 zsh 本来也会加载 GX 配置）。herdr 的配置由你自己管理时
-（`config.toml` 里没有 GX 的标记行，见上文「herdr 配置」；或 `HERDR_CONFIG_PATH` 指向别的文件），herdr 不会被修改，
-通知里会说明。
+herdr 新开的窗格使用 GX Zsh：GX Zsh 第一次启动时生成或接管 `<profile>/herdr/config.toml`，并在其中标记由 GX 管理
+`[terminal]` 的 `default_shell` 与 `shell_mode`（见上文「herdr 配置」）。删掉标记行后这个文件完全归你，GX 不再修改；
+`HERDR_CONFIG_PATH` 指向别的文件时同样不会被修改。
 
 ## 已知问题
 
-- Windows 上没有 GPU 的虚拟机（例如云主机）里，WezTerm GX 默认的 OpenGL 渲染建不出窗口，启动后没有任何反应
-  （WezTerm GX 0.3.0 也是如此）。在 `%USERPROFILE%\.config\wezterm\config\appearance.lua` 开头的 `front_end` 表里把
-  `windows = 'OpenGL'` 改成 `windows = 'WebGpu'`，再在它返回的表里加一行 `webgpu_force_fallback_adapter = true,`，
-  改用系统自带的 CPU 渲染即可（改过的文件以后升级时会保留，见上文「WezTerm 配置」）；发版冒烟在无 GPU 的 Windows
-  runner 上就是用这两项设置启动 WezTerm GX 的。
+- Windows 上显卡驱动达不到 OpenGL 4.3 时（例如没有 GPU 的虚拟机或部分远程桌面），Ghostty GX 自动改用随包的 Mesa
+  软件渲染（安装目录下的 `ghostty\mesa`），能用但更占 CPU；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
+  日志 `%LOCALAPPDATA%\ghostty\logs\ghostty.log` 里 `loaded OpenGL … software=true` 表示正在用软件渲染。
+- 0.3.0 及以前 WezTerm GX 的设置面板、Shell 选择器、壁纸、插件、键位与图片粘贴在 Ghostty GX 里没有对应功能，
+  WezTerm 的配置不会迁移。
 
 ## 仓库结构
 
@@ -157,7 +142,9 @@ Ubuntu 上选系统 Zsh 时，herdr 改用 GX Zsh（herdr 里的 zsh 本来也�
 | `gx0404/gx_shell` | 安装布局、安装器、来源锁、stage 整合、冒烟与发布 | 根 coordinator commit + 锁文件 |
 | `gx0404/herdr` | herdr 源码、上游同步、自身测试与包身份 | 锁定默认分支的完整 SHA，由 shell 构建链消费 |
 | `gx0404/ohmyzsh` | GX Zsh 配置、启动器、Zsh/MSYS2、依赖再分发与自身测试 | 外部 source root 生成 shell stage |
-| `gx0404/wezterm` | WezTerm 源码、配置、启动器、配置指纹与自身测试 | 外部 checkout 递归取其子模块，生成 WezTerm stage |
+| `gx0404/gx_ghostty` | Ghostty GX 源码、GX 补丁、字体与 Mesa/ConPTY 再分发、stage 契约 `scripts/gx_package.py` 与自身测试 | 外部 checkout 按其消费契约 `gx_package.py <windows\|deb> --build` 生成 schema 3 stage |
+
+0.3.0 及以前的第三个组件是 `gx0404/wezterm`（WezTerm GX），0.4.0 起由 `gx0404/gx_ghostty` 取代。
 
 ```text
 components.lock.json          三个 fork 的 repository / branch / revision
@@ -175,7 +162,7 @@ scripts/gx_shell_smoke_*      两平台安装生命周期与隔离硬件 GPU 冒
 `.local/` 全目录已由根 `.gitignore` 忽略。根仓的受版本控制工作区不含组件目录；CI 可按 Git 身份契约把组件
 checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材料：herdr、ohmyzsh 的本地 `gx` 已在
 `git switch --detach gx` 后用 `git branch -d gx` 删除（HEAD、文件与 stash 未变），wezterm
-不含独立 Git 元数据；不删除这些副本，也不能把它们或继承的父仓 HEAD 当作正式组件来源。WezTerm 的 C 依赖
+不含独立 Git 元数据；不删除这些副本，也不能把它们或继承的父仓 HEAD 当作正式组件来源。组件有子模块时
 只从其独立 checkout 的 `.gitmodules` 递归初始化。fork 的开发规则、路由器、测试及 workflow 留在各 fork，
 根仓不复制它们。
 
@@ -192,22 +179,23 @@ checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材�
 
 ### 来源锁与更新
 
-`components.lock.json` 的 `schema` 为 `1`；`components` 恰有 `herdr`、`ohmyzsh`、`wezterm`，
+`components.lock.json` 的 `schema` 为 `1`；`components` 恰有 `herdr`、`ohmyzsh`、`gx_ghostty`，
 每项恰有 `repository`（`gx0404/<name>`）、`branch` 和 `revision`（完整 40 位 commit SHA）。
-`branch` 改为各自既有默认分支，不再统一使用 `gx`：
+`branch` 为各自既有默认分支，不再统一使用 `gx`：
 
 | repository | branch |
 |---|---|
 | `gx0404/herdr` | `feature/gx_herdr` |
 | `gx0404/ohmyzsh` | `feature/gx_ohmyzsh` |
-| `gx0404/wezterm` | `feature/gx_wezterm` |
+| `gx0404/gx_ghostty` | `gx_ghostty` |
 
 根 coordinator SHA 与三组件 SHA 分别记录，不能再拿一个根提交代表四个仓库。锁 digest 是文件**原始字节**
-的 SHA-256；换行或 JSON 格式变化也会改变它，不在锁内写自引用 digest。
+的 SHA-256；换行或 JSON 格式变化也会改变它，不在锁内写自引用 digest。仍是 `wezterm` 组件的旧锁会被拒绝。
 
-真实 `components.lock.json` 已写入，不需初始化占位锁或猜测 SHA。默认分支合并与锁对齐后已重新校验，
-最终锁的 revision、digest 与远端校验结果见「本轮快照与当前待验证项」；此前针对 `gx` 的校验只是历史证据，
-来源校验通过也不代表真实产品已通过验收。
+当前锁的 herdr 与 ohmyzsh 是对齐后的真实修订；`gx_ghostty` 的 revision 是**占位**：取的是远端 `gx_ghostty` 分支
+当时的头 `0ac89c30`，那个提交还没有 `scripts/gx_package.py`，所以 CI 的 Ghostty GX stage 必然失败。发版前要换成
+gx_ghostty 正式发布（0.1.0）的修订，且该修订须含 stage 消费契约（`gx_package.py --build`），再重新
+`check --require-remote`，见「本轮快照与当前待验证项」。来源校验通过也不代表真实产品已通过验收。
 
 在上述对齐完成后，从根仓运行以下 Git Bash 示例；本地与复验 checkout 固定在根仓 `.local/sources/<component>`，不使用
 仓外路径：
@@ -219,7 +207,7 @@ python scripts/gx_shell_sources.py checkout --lock components.lock.json --output
 ```
 
 - `check` 离线验结构并输出 digest；`--require-remote` 另验各 SHA 是真实 commit，且从对应远端默认分支可达。
-- `checkout` 按锁定 SHA 建立独立、detached、干净的 checkout，不追随任何浮动分支头；WezTerm 递归取子模块。
+- `checkout` 按锁定 SHA 建立独立、detached、干净的 checkout，不追随任何浮动分支头；组件有子模块时递归取。
   已有目录必须身份、SHA 与干净状态均匹配，否则拒绝覆盖。不能把开发中的 fork 工作区当作可清空的缓存。
 - 完整 checkout 已在本地时可加 `--offline` 复用；缺 clone 或递归子模块会失败，不偷偷联网。
 
@@ -238,12 +226,14 @@ python scripts/gx_shell_sources.py check --lock components.lock.json --require-r
 
 ### 安装布局与安全
 
-外置源码不改变安装契约：Windows 保持 `{app}\bin`、`lib`、`runtime\msys64`、`share\ohmyzsh-gx`、
-`fonts` 和 `{app}\wezterm\`；deb 保持 `/usr/lib/{ohmyzsh-gx,wezterm-gx}` 与
-`/usr/share/{ohmyzsh-gx,wezterm-gx}`。布局变更须同步两个 fork 的启动器、WezTerm fork 中的
-`dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager、安装生命周期与硬件 GPU 冒烟入口，并更新来源锁。
+安装布局：Windows 为 `{app}\bin`、`lib`、`runtime\msys64`、`share\ohmyzsh-gx`、`fonts` 和 Ghostty GX 的
+`{app}\ghostty\`（`ghostty.exe`、ConPTY、`mesa\`、`share\`）；deb 为 `/usr/lib/{ohmyzsh-gx,ghostty-gx}`、
+`/usr/share/ohmyzsh-gx`、`/usr/bin/{gx-zsh,herdr,ghostty-gx}` 与桌面项 `com.gx0404.ghostty-gx.desktop`。
+Ghostty GX 按 `<exe 目录>\..\bin` 找 GX Zsh，所以布局变更须同步 Oh My Zsh GX 与 herdr 的启动器、Ghostty GX 的
+GX Zsh 探测（`src/gx/profiles.zig`）、根 packager、安装生命周期与硬件 GPU 冒烟入口，并更新来源锁。0.3.0 及以前的
+`{app}\wezterm\` 与 `/usr/lib/wezterm-gx` 在升级时删除。
 
-Windows 安装器仅管理 HKCU 中自己的 PATH、字体和 `Software\GX Shell`；文件被占用时拒绝继续，
+Windows 安装器仅管理 HKCU 中自己的 PATH、字体、`App Paths\ghostty.exe` 和 `Software\GX Shell`；文件被占用时拒绝继续，
 不杀进程。deb 维护脚本不写用户 HOME。真实安装/卸载仅在一次性 runner 或容器执行；开发机不运行安装
 生命周期冒烟，只验证隔离的完整 payload 的硬件 GPU/窗口，具体边界见「验收与 PENDING」。
 
@@ -256,7 +246,8 @@ Windows 安装器仅管理 HKCU 中自己的 PATH、字体和 `Software\GX Shell
 它不创建目录、不修改环境、不下载/安装依赖，也不运行编译器或链接器。
 
 `scripts/gx_shell_build.py` 是实际的本地串行构建入口：它按 `components.lock.json` checkout 独立 fork，
-先运行规划器，再按共享 jobs 预算生成 WezTerm/Oh My Zsh stage，最后调用根 `assemble/build`。它只生成
+先运行规划器，再按共享 jobs 预算依次生成 Ghostty GX stage（锁定 checkout 的 `gx_package.py --build`，钉版 Zig，
+不用 MSVC）与 Oh My Zsh/herdr stage（只在这一步激活 MSVC），最后调用根 `assemble/build`。它只生成
 `-local` 不可发布产物；本地/复验工作目录必须是当前根仓 `.local/build/<run>`，源码必须是
 `.local/sources/<component>`，不得使用仓外路径；`--plan` 只做来源和资源检查，不编译。
 
@@ -270,12 +261,12 @@ $sources = Join-Path $local 'sources'
 $run = Join-Path $local ('build/' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $roots = @{}
 $revisions = @{}
-foreach ($name in 'herdr', 'ohmyzsh', 'wezterm') {
+foreach ($name in 'herdr', 'ohmyzsh', 'gx_ghostty') {
     $roots[$name] = Join-Path $sources $name
     $revisions[$name] = $lock.components.$name.revision
 }
 ./scripts/gx_shell_local_build.ps1 -Format Json -BuildRoot $run `
-    -RepoRoot $repo -Component wezterm `
+    -RepoRoot $repo -Component herdr `
     -ComponentRoots $roots -ComponentRevisions $revisions `
     -Toolchain '1.96.1-x86_64-pc-windows-msvc'
 ```
@@ -290,17 +281,22 @@ foreach ($name in 'herdr', 'ohmyzsh', 'wezterm') {
   Rust/MSVC 与资源规划条件满足，**不等于构建或发布通过**。
 - `-UseSccache` / `-UseLld` 只在工具已安装且验证后选择；默认不启用，不自动安装。仍须单独激活 MSVC/SDK
   环境。环境建议中的离线模式要求事先准备依赖缓存，规划器不会填充缓存；不要用 `Invoke-Expression` 盲执行输出。
-- **GPU 只用于之后的 WezTerm runtime smoke**，不参与编译资源预算；检测到 GPU、规划器成功或软件渲染成功，
-  都不能代替真实 GPU/窗口渲染验收。
+- **GPU 只用于之后的 Ghostty GX runtime smoke**，不参与编译资源预算；检测到 GPU、规划器成功或软件渲染成功，
+  都不能代替真实 GPU/窗口渲染验收。规划器另报告 Ghostty GX 用的 zig（`GX_GHOSTTY_ZIG`、`ZIG` 或 PATH）。
 
 ### stage 与整包
 
-真实构建仍需 Python 3.14（含 zstd 支持）、fork 要求的 Rust MSVC 工具链、VS Build Tools/Windows SDK、
-PowerShell 7、.NET SDK 8、Strawberry Perl 及 Inno Setup 7.1；Linux 构建与冒烟所需的 Docker 和容器工具链
-由 Ubuntu GitHub runner 提供，不在本机安装 Docker/WSL。具体版本以锁定 fork 的构建配置与 release workflow
-为准，缺工具先报 PENDING，不伪造 runner 或自动安装来绕过检查。
+真实构建仍需 Python 3.14（含 zstd 支持）、herdr 要求的 Rust MSVC 工具链、VS Build Tools/Windows SDK、
+PowerShell 7、.NET SDK 8（herdr 的 ConPTY 包校验）及 Inno Setup 7.1；Ghostty GX 用其锁定 checkout 钉版的
+Zig 0.16.0。Linux 的 Ghostty GX 只能在 Ubuntu 24.04 上构建（GTK 4.14、libadwaita 1.5），CI 用 `ubuntu:24.04` 容器；
+Linux 冒烟所需的 Docker 由 Ubuntu GitHub runner 提供，不在本机安装 Docker/WSL。具体版本以锁定 fork 的构建配置与
+release workflow 为准，缺工具先报 PENDING，不伪造 runner 或自动安装来绕过检查。
 
-WezTerm 在 CI 中通过独立 checkout 的 `scripts/gx_package.py` 及其 `--stage-dir` 入口产出 stage；
+Ghostty GX 按 gx_ghostty `scripts/gx_package.py` 文档里的消费契约产出 stage：Windows 为
+`python scripts/gx_package.py windows --build --stage-dir <stage> --version-string <VS>`，Ubuntu 24.04 为
+`python3 scripts/gx_package.py deb --build --install-deps --stage-dir <stage> --version-string <VS>`（本地不加
+`--install-deps`，依赖须已装好），两者之后都运行 `verify-stage`。`<VS>` 是锁定 checkout 的
+`gx_release.release_info(...).version_string`（`<build.zig.zon 版本>-gx.<fork 版本>`）。
 根 `scripts/gx_shell_stage_shell.sh` 接受对应的 Oh My Zsh/herdr source roots、锁和 jobs，生成带 provenance
 的 shell stage。CI 的 source roots 可以位于 `RUNNER_TEMP`；本地/复验的 source roots 只能位于
 `.local/sources/<component>`，两条 stage 链的输出、assembly、dist、cache 和日志只能位于
@@ -326,14 +322,16 @@ python scripts/gx_shell_build.py --platform windows --components-lock components
 
 ```bash
 python scripts/gx_shell_package.py assemble --platform windows --allow-dirty \
-  --components-lock components.lock.json --wezterm-stage .local/build/<run>/wezterm-stage \
+  --components-lock components.lock.json --ghostty-stage .local/build/<run>/ghostty-stage \
   --ohmyzsh-stage .local/build/<run>/ohmyzsh-stage --output .local/build/<run>/assembly
 python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly --output .local/build/<run>/dist
 ```
 
-根 packager 离线消费 stage、锁和根安装器材料，不再从组件源码补图标、指纹或许可。schema 2 manifest
-保留 coordinator、三个组件来源、原始锁快照/digest、stage 回执与完整清单；文件缺失、内容变动、
-来源错配或冲突必须失败。`verify` 需要同一根 SHA 和锁构建的**两个平台**产物，不能对单个本地 Windows 包
+根 packager 离线消费 stage、锁和根安装器材料，不再从组件源码补图标或许可。Ghostty GX stage 是 gx_ghostty 的
+schema 3 stage（`stage-manifest.json`：来源修订、版本串、二进制散列与完整清单；Windows 顶层为 `app/`、`fonts/`、
+`build-inputs/`，deb 为 `root/`、`fonts/`，外加 dpkg-shlibdeps 得出的 `deb_depends`）；两个组件的同名字体必须字节相同，
+安装器只登记包里实际带的字体。整包 manifest 为 schema 3，保留 coordinator、三个组件来源、原始锁快照/digest、
+stage 回执与完整清单；文件缺失、内容变动、来源错配或冲突必须失败。`verify` 需要同一根 SHA 和锁构建的**两个平台**产物，不能对单个本地 Windows 包
 声称发布校验通过；本地产物即使凑齐两平台，也只在 `--allow-dirty` 下验收，仍不可发布。
 
 ## 发版
@@ -343,13 +341,15 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
 
 1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
    digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
-2. 根与组件分别 checkout，组件放 `RUNNER_TEMP`；WezTerm 递归取自身子模块。build/test jobs 使用外部
-   source roots；package jobs 只消费 stage artifacts 与根打包代码，不需要根组件目录或旧指纹 commit fetch。
-3. 保留 Windows/Linux 构建、根及组件单测、真实 Zsh/PTY、原生启动器、WezTerm config/mux/GUI nextest、
-   Inno Setup 7.1 编译。完整安装生命周期走 GitHub-hosted Windows，以及 Ubuntu GitHub runner 上的
-   Docker Ubuntu 20.04/24.04 容器；后两者验证同一个 DEB。保留安装—使用—卸载、同版本重装和配置保护检查，
-   硬件 GPU/窗口另按下节隔离验收。**无旧 Release 升级覆盖**：不下载旧安装包，不把 warning skip 或
-   同版本重装写成旧版升级通过；旧版替换/跨版本升级未验证。
+2. 根与组件分别 checkout，组件放 `RUNNER_TEMP`。build/test jobs 使用外部 source roots；Ghostty GX 的两个 stage 由
+   `ghostty-windows`（windows-2025）与 `ghostty-linux`（`ubuntu:24.04` 容器）按 gx_ghostty 的消费契约生成；package
+   jobs 只消费 stage artifacts 与根打包代码，不需要根组件目录。
+3. 保留 Windows/Linux 构建、根及组件单测、真实 Zsh/PTY、原生启动器、Ghostty GX 的 stage/发版契约测试与核心测试
+   （`ghostty-tests`：`run_unittests.py test_gx_package test_gx_release` 与 `zig_test.py --suite main -Dapp-runtime=none`，
+   含 termio/PTY）、Inno Setup 7.1 编译。完整安装生命周期走 GitHub-hosted Windows，以及 Ubuntu GitHub runner 上的
+   Docker Ubuntu 24.04 容器。保留安装—使用—卸载、同版本重装和配置保护检查，硬件 GPU/窗口另按下节隔离验收。
+   **无旧 Release 升级覆盖**：不下载旧安装包，不把 warning skip 或同版本重装写成旧版升级通过；Windows 冒烟的
+   `-PreviousInstaller` 只在显式给出旧安装包时运行，workflow 不传；旧版替换/跨版本升级未验证。
 4. 两平台产物均完成后，由根 `verify` 核对共同 coordinator SHA、锁/digest、组件来源与文件散列，
    生成 `SHA256SUMS`。仅发布门禁认可的干净 CI stage 可以发布，local 永远不行。
 5. 新版本标题使用 `## X.Y.Z(YYYY-MM-DD)`；`(TBD)` 会阻止发布。tag 必须为同版本 `gx-shell-vX.Y.Z`，
@@ -365,8 +365,9 @@ python scripts/gx_shell_package.py build --assembly .local/build/<run>/assembly 
   内联的 validate-artifacts* job：不重新编译，下载该 run 的原始安装器与 DEB，以当前冒烟重做两平台安装生命周期，
   再用 `verify` 与汇总回执校验；源 run 的根锁原始字节必须与当前根锁一致，复验永不发布。
 
-配置指纹、历史配置识别和迁移材料由 WezTerm fork 管理，并随 stage 的 `build-inputs` 提供；
-根仓不再依赖旧 monorepo 发布提交复算它们。来源锁更新后仍需对获锁 fork 的这些材料重新验收。
+0.4.0 起没有 WezTerm 配置指纹与迁移材料：WezTerm 的配置原样保留、不迁移。Ghostty GX 的版本串、Zig 钉版与
+stage 契约来自锁定的 gx_ghostty checkout，`prepare` 从中读出 `zig` 与 `ghostty_version_string` 交给两个平台的 stage job。
+来源锁更新后仍需对获锁 fork 重新验收。
 
 ## 验收与 PENDING
 
@@ -388,22 +389,67 @@ Windows 在根目录可运行
 
 ### 已批准的实测路线
 
-以下为目标路线。最终锁 run `36998777427` 已完成路线 1 的 Windows 安装器生命周期与路线 2 的 DEB 容器验收，
-**路线 3 的硬件 GPU 仍受阻**，结果见下节：
+以下为目标路线。0.3.0（WezTerm GX）的最终锁 run `36998777427` 完成过路线 1 与路线 2；0.4.0（Ghostty GX）要等
+来源锁换成 gx_ghostty 正式修订后重跑。**路线 3 的硬件 GPU 仍受阻**，结果见下节：
 
 1. **GitHub-hosted Windows**：生成完整 payload，用 Inno Setup 7.1 编译安装器，再以
-   `scripts/gx_shell_smoke_windows.ps1` 验证安装、使用、同版本重装、配置保护与卸载。
-2. **Ubuntu GitHub runner**：完成 Linux 构建，以 `scripts/gx_shell_smoke_linux.sh` 在 Docker 的
-   Ubuntu 20.04 和 24.04 容器验证**同一个 DEB** 的安装生命周期；不在本机安装 Docker 或 WSL。
-3. **本机硬件 GPU/窗口**：新增入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 的门禁仍返回
-   `BLOCKED_UNSAFE_KNOWNFOLDERS`，真实 GPU 窗口与 runtime smoke 未验证。目标是对隔离的
-   **完整 payload** 使用独立工作目录和配置做真实硬件 GPU/窗口检查，不运行安装器，不改现有用户配置、
-   HKCU PATH 或字体。记录实际渲染适配器与窗口运行证据；不能只探测显卡或启动单个二进制就判定通过。
+   `scripts/gx_shell_smoke_windows.ps1` 验证安装、使用、同版本重装、配置保护与卸载；Ghostty GX 以
+   `GHOSTTY_GX_OPENGL=software` 在随包 Mesa llvmpipe 上启动，「Ghostty GX」与「GX Zsh」快捷方式都要拉起
+   ghostty → gx-zsh → zsh，日志须有 OpenGL 4.3+ 且 `software=true`。
+2. **Ubuntu GitHub runner**：完成 Linux 构建，以 `scripts/gx_shell_smoke_linux.sh` 在 Docker 的 Ubuntu 24.04 容器
+   验证 DEB 的安装生命周期，`ghostty-gx -e gx-zsh` 在 Xvfb 下以软件 OpenGL 运行；不在本机安装 Docker。
+3. **本机硬件 GPU/窗口**：入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 的 `Run` 返回
+   `BLOCKED_PENDING_ISOLATION_AUDIT`：审计过的 gx_ghostty `f9e67e5f` 中 Ghostty GX 的配置、缓存、状态与日志
+   由 `XDG_*_HOME` 或 `LOCALAPPDATA` 决定，home 取 `HOMEDRIVE`/`HOMEPATH`，未见 KnownFolders；但锁定修订须重新审计
+   并通过隔离的原生路径探测才能放行。目标是对隔离的**完整 payload** 使用独立工作目录和配置做真实硬件 GPU/窗口检查，
+   不运行安装器，不改现有用户配置、HKCU PATH 或字体；日志须为系统驱动（`software=false`）的 OpenGL 4.3+。
+   不能只探测显卡或启动单个二进制就判定通过。
 
 CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速。无 GPU 的 runner 可以验证软件 fallback
 路径，但软件渲染不经过目标硬件 GPU/驱动，不能替代本机硬件 GPU 证据；本机窗口成功也不替代安装器生命周期。
 
 ### 本轮快照与当前待验证项
+
+#### 0.4.0（TBD）：Ghostty GX 取代 WezTerm GX（2026-10-09，未发布、未推送）
+
+本轮在分支 `ghostty-gx`（基于 `be436e51`）上完成代码、安装器、workflow 与文档改动，只做本地提交。
+
+- **来源锁**：herdr `702cf257f6a4c9e889a823c09c423bb3b748f8cb`（远端分支头 `fc6c771c` 的父提交，Oh My Zsh 的依赖锁钉的
+  就是它）、ohmyzsh `49dc0ea126df07dfb91433b706f996a1f1af96b3`、gx_ghostty `0ac89c3012abd3f4a2a79d1d64e7e8c4833c4156`
+  （**占位**：当时的远端分支头，没有 `scripts/gx_package.py`），lock digest
+  `88aa2640060f7728241cabb1d9238aa0e136f13a609fd0af87f41b43f9768840`。`check` 与 `check --require-remote` 均通过。
+- **stage 消费契约**：workflow 与 `gx_shell_build.py` 按 gx_ghostty 未合并分支 `wip/G5`（`3253a3922`）中
+  `scripts/gx_package.py` 文档的消费契约调用 `windows --build` 与 `deb --build`；它需要先并入 gx_ghostty 并进入
+  锁定的发布修订。该契约把 Ubuntu 24.04 缺的 `libgtk4-layer-shell.so` 随包放进 `/usr/lib/ghostty-gx/lib/`。
+- **默认进入 GX Zsh**：gx_ghostty 已有 GX Zsh 探测（`src/gx/profiles.zig`），但到 `e4faab32` 为止 `defaultProfile` 还没有
+  接成默认命令，Windows 上不带参数启动时不会进入 GX Zsh（按 `f9e67e5f` 的代码会回退到 cmd.exe）。在它接好之前，
+  Windows 冒烟里「Ghostty GX」快捷方式那一段（ghostty → gx-zsh → zsh）会失败；「GX Zsh」快捷方式用 `-e`，不依赖它。
+- **本地端到端（Windows）**：Ghostty GX stage 由 gx_ghostty `f9e67e5f` 构建（钉版 Zig 0.16.0，win32 ReleaseFast，版本串
+  `1.3.2-gx.0.1.0`，701 个文件，`verify-stage` 通过）；shell stage 由 ohmyzsh `49dc0ea1` 与 herdr `702cf257` 经规划器、
+  MSVC 激活与 `gx_shell_stage_shell.sh` 构建（builder=local，34 分 53 秒，`verify-stage` 通过）。用把 gx_ghostty 改指
+  `f9e67e5f` 的临时锁 `--allow-dirty` 组装出 26451 个文件，再用 Inno Setup 7.1.0 编译出
+  `GX-Shell-0.4.0-local-Setup-x64.exe`（179,038,277 字节，sha256
+  `ad59bb9f1388ca93e57fdc1ca5eeb8e656455d0c07baf8fe75202867ed6f8b3a`）与 `windows-x64-sources.tar.xz`。安装包没有运行：
+  本机装有单独的 Oh My Zsh GX，安装器会先卸载它。
+- **根单测**：Windows（`TEMP` 设为 `.local/t3`，`ISCC` 指向 Inno Setup 7.1.0）默认区域设置与 `PYTHONUTF8=1` 各跑一次，
+  都是 Ran 241，OK（skipped=8，均为需要 POSIX 符号链接或 dpkg-deb 的用例）；WSL Ubuntu 24.04（Python 3.12.3）
+  Ran 241，OK（skipped=28，均为 PowerShell/Windows 专用用例）。中文区域设置下 PowerShell 错误输出里的 `…` 曾让 3 个用例
+  解码失败，已给这些子进程调用加 `errors='replace'`。
+- **静态检查**：actionlint 1.7.12 检查 `release.yml` 无报告；`bash -n` 检查 Linux 冒烟、shell stage 与 Debian 维护脚本通过；
+  `git diff --check` 干净；PowerShell 7 解析两个冒烟脚本无错误。
+
+| 项目 | 0.4.0 当前边界 |
+|---|---|
+| 根测试 / workflow 静态检查 | PASS：见上 |
+| 来源锁 | PASS（结构与远端可达）；gx_ghostty 为占位，PENDING 换成正式发布修订 |
+| Ghostty GX stage（CI） | PENDING：锁定修订须含 `gx_package.py --build`；`ghostty-windows`、`ghostty-linux`、`ghostty-tests` 未运行 |
+| Windows 整包 | PASS（本地组装与 Inno Setup 7.1 编译，`-local`、不可发布）；CI 构建 PENDING |
+| Windows 安装生命周期 / 软件渲染窗口 | PENDING：只在一次性 runner 运行，本机不安装 |
+| DEB 构建与 Ubuntu 24.04 冒烟 | PENDING：需要 CI（本机不装 Docker）；DEB 夹具与符号链接用例已在 WSL 通过 |
+| 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT` |
+| 从 0.3.0 升级 | 未验证：Windows 冒烟有可选的 `-PreviousInstaller` 段，workflow 不传旧安装包 |
+
+#### 0.3.0 及以前（WezTerm GX，历史记录）
 
 **版本**：0.2.0 曾于 2026-09-30 发布（`ee1905f12`），其 Release 与 tag 之后被删除。之后 run `37006802406`
 （#23，head `c49b7f90`）以 0.2.0 发布，在 publish 步骤被 403 拒绝：运行中途 `main` 前进，Actions token 无法在
@@ -548,7 +594,7 @@ CI 通过的是两平台构建、verify、安装生命周期与软件渲染路�
 
 ## 许可
 
-各组件沿用各自的许可证：WezTerm 与 Oh My Zsh 为 MIT，herdr 为 Apache-2.0；源码许可见各 fork
-锁定 checkout 中的 LICENSE，根仓保留整包许可材料。打包的第三方许可随安装包分发：Windows 在
-安装目录的 `licenses\`（WezTerm 部分在 `wezterm\` 下），Ubuntu 从
-`/usr/share/doc/gx-shell/copyright` 列出各许可文本的位置。
+各组件沿用各自的许可证：Ghostty GX 与 Oh My Zsh 为 MIT，herdr 为 Apache-2.0，随包字体为 SIL OFL 1.1；源码许可见
+各 fork 锁定 checkout 中的 LICENSE，根仓保留整包许可材料。打包的第三方许可随安装包分发：Windows 在
+安装目录的 `licenses\`（Ghostty GX 及其 ConPTY、Mesa、LLVM 部分在 `ghostty\licenses\` 下），Ubuntu 从
+`/usr/share/doc/gx-shell/copyright` 列出各许可文本的位置（Ghostty GX 为 `/usr/share/doc/ghostty-gx/copyright`）。

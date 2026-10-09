@@ -8,6 +8,52 @@ GitHub Release 说明，只写面向用户的变化；验收过程与内部记�
 0.2.0 / 0.1.0 是改为协调仓之前的历史记录：其中 subtree、旧 Release 升级、指纹生成与耗时描述
 不再是现行架构的操作流程或验收结果。保留它们用于解释既有行为，不表示旧资产仍可下载。
 
+## 0.4.0(TBD)
+
+本版用 Ghostty GX 取代 WezTerm GX，成为 GX Shell 的终端。Ghostty GX 是 gx0404/gx_ghostty 维护的 Ghostty fork：
+Windows 上是原生应用，Ubuntu 上是 GTK 4 应用。GX Zsh（Oh My Zsh GX）与 herdr 照旧随包提供。DEB 从本版起只支持
+Ubuntu 24.04 及更新版本。
+
+### 升级须知（破坏性变化）
+
+- GX Shell 不再包含 WezTerm GX。它的设置面板、Shell 选择器、壁纸、插件、自定义键位和 `Ctrl+V` 粘贴图片
+  （`clipboard_image_paste`）都随之移除，Ghostty GX 里没有对应的迁移。Ghostty GX 使用自己的配置文件：
+  Windows 为 `%LOCALAPPDATA%\ghostty\config.ghostty`，Ubuntu 为 `~/.config/ghostty/config.ghostty`。
+- WezTerm 的配置目录 `~/.config/wezterm` 及其数据原样保留，GX Shell 不读取、不迁移，也不删除。
+- Windows 上从旧版升级时，安装程序删除旧版自带的 WezTerm GX 程序（安装目录下的 `wezterm`），以及仍指向它的
+  「WezTerm GX」开始菜单与桌面快捷方式和 `App Paths\wezterm-gx.exe` 登记。单独安装的 WezTerm GX 不受影响，
+  安装程序也不再把它当作旧组件先行卸载；卸载 GX Shell 时同样保留它创建的快捷方式与登记。
+- Windows 开始菜单改为「Ghostty GX」与「GX Zsh」两个快捷方式，可选的桌面快捷方式改为「Ghostty GX」；
+  `ghostty` 经 `App Paths` 指向随包的 Ghostty GX。
+- DEB 不再支持 Ubuntu 20.04 与 22.04：Ghostty GX 需要 GTK 4.14 与 libadwaita 1.5。命令 `wezterm-gx`、
+  `wezterm-gx-gui` 移除，改为 `ghostty-gx`；在 Ghostty GX 里打开 GX Zsh 用 `ghostty-gx -e gx-zsh`。
+- 升级前先运行 `herdr server stop`，再关闭 WezTerm GX、Ghostty GX 和 GX Zsh。安装程序遇到被占用的文件会拒绝
+  继续，但不会替你结束进程。
+
+### Ghostty GX
+
+- Windows 上「Ghostty GX」默认打开 GX Zsh；「GX Zsh」快捷方式总在第一个标签页运行 GX Zsh，即使配置了别的
+  默认 Shell。
+- 渲染需要 OpenGL 4.3。Windows 上显卡驱动达不到时（例如虚拟机或远程桌面），Ghostty GX 改用随包的 Mesa
+  软件渲染。
+- 随包字体不变：仍是 JetBrains Mono Nerd Font 与 Noto Sans CJK，文件与 0.3.0 完全相同。
+
+### 打包与发版
+
+- 来源锁 `components.lock.json` 的组件改为 `herdr`、`ohmyzsh` 与 `gx_ghostty`（分支 `gx_ghostty`）；Ghostty GX
+  以 gx_ghostty 产出的 schema 3 stage 进入组装，安装包清单升级为 schema 3。
+- 安装布局：Windows 的 Ghostty GX 在安装目录下的 `ghostty`，DEB 在 `/usr/lib/ghostty-gx`。
+- DEB 冒烟只在干净的 Ubuntu 24.04 容器里运行：安装、GX Zsh、herdr、Ghostty GX 在 Xvfb 下以软件 OpenGL 运行
+  GX Zsh、重装、移除与清除。Windows 冒烟在一次性 runner 上用随包 Mesa 验证 Ghostty GX 启动 GX Zsh。
+
+### 已知限制
+
+- 真实硬件 GPU 下的窗口渲染没有验证，CI 只覆盖软件渲染路径（Mesa llvmpipe）。
+- 桌面输入、回显与重绘没有验证。
+- 从旧版本升级没有在 CI 中验证。
+- herdr 的 Windows 原生通知默认关闭；一旦启用，它会在 `HKCU\Software\Classes` 下写入注册表项，卸载 GX Shell
+  时不会清理。
+
 ## 0.3.0(2026-10-02)
 
 本版把 GX Shell 改为一个协调仓加三个 fork 的架构：herdr、Oh My Zsh GX 与 WezTerm GX 在各自的 fork 里开发和测试，

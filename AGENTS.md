@@ -22,13 +22,14 @@
 
 ## 硬边界
 
-- **来源锁与身份**：锁文件 `schema: 1`，`components` 恰含 `herdr`、`ohmyzsh`、`wezterm`；每项恰为
+- **来源锁与身份**：锁文件 `schema: 1`，`components` 恰含 `herdr`、`ohmyzsh`、`gx_ghostty`；每项恰为
   `repository: gx0404/<name>`、`branch`、`revision: <40 位 commit SHA>`。`branch` 分别为既有默认分支
-  `feature/gx_herdr`、`feature/gx_ohmyzsh`、`feature/gx_wezterm`。构建与 checkout 只使用锁定 SHA，
-  不能解析浮动分支替代它。`scripts/gx_shell_sources.py check` 验结构与原始字节 SHA-256；
-  `check --require-remote` 另验 commit 存在且可从对应默认分支到达。来源更新必须显式执行、审阅 diff。
+  `feature/gx_herdr`、`feature/gx_ohmyzsh`、`gx_ghostty`。0.4.0 起 Ghostty GX（`gx0404/gx_ghostty`）取代
+  WezTerm GX，含 `wezterm` 的锁一律拒绝；`gx_ghostty` 的 revision 在 gx_ghostty 发布前是占位（README「来源锁与更新」）。
+  构建与 checkout 只使用锁定 SHA，不能解析浮动分支替代它。`scripts/gx_shell_sources.py check` 验结构与原始字节
+  SHA-256；`check --require-remote` 另验 commit 存在且可从对应默认分支到达。来源更新必须显式执行、审阅 diff。
 - **checkout 身份与路径边界**：CI 根 checkout 与组件 checkout 分离，CI 组件放在 `RUNNER_TEMP`；这是独立的 Git
-  身份边界，不等同于本地路径规则。三个 fork 各有独立 Git 元数据；WezTerm 递归初始化自身 `.gitmodules`，
+  身份边界，不等同于本地路径规则。三个 fork 各有独立 Git 元数据；组件有 `.gitmodules` 时递归初始化，
   根仓不再维护组件子模块。本地与复验 checkout 必须放在根仓 `.local/sources/<component>`，不得使用仓外目录
   或其他临时根；不复用有改动、SHA 不符、共享父仓 Git 元数据的目录，不 reset 或清除用户工作来凑齐构建条件。
 - **本地/复验目录契约**：本地编译、构建、stage、assembly、dist、cache、日志及其临时工作目录必须位于根仓
@@ -40,33 +41,39 @@
   `scripts/gx_shell_stage_shell.sh` 对接对应 source root，根 packager 不再读取根组件目录。
   组装记录根 coordinator SHA、三个不同来源的 revision、锁快照及 digest、构建回执与完整文件清单，
   不能再要求四仓 SHA 相同。herdr 必须带包身份及对应源码；缺文件、散列不符、同名字体内容不同、路径冲突
-  或非契约允许的符号链接/junction 一律拒绝。packager 的 schema 2 与来源锁的 schema 1 不可混淆。
+  或非契约允许的符号链接/junction 一律拒绝。Ghostty GX stage 只由锁定 gx_ghostty checkout 的消费契约
+  `scripts/gx_package.py <windows|deb> --build` 加 `verify-stage` 生成，是该仓的 schema 3 stage；整包 manifest
+  也是 schema 3，二者与来源锁的 schema 1 不可混淆。
 - **安装布局是跨组件契约**：Windows 为 `{app}\bin`、`lib`、`runtime\msys64`、
-  `share\ohmyzsh-gx`、`fonts` 加 `{app}\wezterm\`；deb 为 `/usr/lib/{ohmyzsh-gx,wezterm-gx}`、
-  `/usr/share/{ohmyzsh-gx,wezterm-gx}`。改布局须协调两个 fork 的启动器、WezTerm fork 内的
-  `dotfiles/wezterm-config/utils/gx-shell.lua`、根 packager、安装生命周期与硬件 GPU 冒烟入口，更新锁并重新验收。
+  `share\ohmyzsh-gx`、`fonts` 加 `{app}\ghostty\`；deb 为 `/usr/lib/{ohmyzsh-gx,ghostty-gx}`、
+  `/usr/share/ohmyzsh-gx`、`/usr/bin/{gx-zsh,herdr,ghostty-gx}`。Ghostty GX 按 `<exe 目录>\..\bin` 找 GX Zsh；
+  改布局须协调两个 fork 的启动器、gx_ghostty 的 `src/gx/profiles.zig`、根 packager、安装生命周期与硬件 GPU
+  冒烟入口，更新锁并重新验收。升级只删除旧版 `{app}\wezterm\` 及指向它的快捷方式与 `App Paths\wezterm-gx.exe`。
 - **local 永远不可发布**：Windows 先用 `scripts/gx_shell_local_build.ps1` 做只读 CPU/内存规划。
-  Cargo、CMake、Zsh 共用预算，组件串行，不把 jobs 乘以组件数；GPU 只用于后续 runtime smoke，不用于编译。
+  Cargo、CMake、Zig、Zsh 共用预算，组件串行，不把 jobs 乘以组件数；GPU 只用于后续 runtime smoke，不用于编译。
   本地构建根固定为当前根仓的 `.local/build/<run>`（通过 `GX_LOCAL_BUILD_ROOT` 传递），缓存和日志也必须留在
   `.local/`；herdr 回执为 `builder=local`，组装必须 `--allow-dirty`，产物带 `-local`，不得提升为可发布包。
   环境不能带 `GH_TOKEN`/`GITHUB_TOKEN`，不得伪造 CI/runner 身份。
 - **发版门禁**：根仓只有 `.github/workflows/release.yml` 一个 workflow（无 `workflow_call`），三种用法：
   推送 tag 发版；手动 `publish=false` 做完整构建验收；手动 `source_run_id` 复验已完成 run 的原始产物
   （不重编、不发布）。发版只走它；tag 必须等于根 CHANGELOG 最大 SemVer，日期
-  不能是 `(TBD)`，coordinator commit 必须在 `main` 上。来源锁、组件测试、两平台构建、PTY/nextest、
-  Inno Setup 7.1、安装与 runtime smoke、两平台 provenance/散列校验都通过后才能发布；上传清单以
+  不能是 `(TBD)`，coordinator commit 必须在 `main` 上。来源锁、组件测试（Oh My Zsh 的 Zsh/PTY 与启动器、
+  Ghostty GX 的 stage/发版契约测试与 `-Dapp-runtime=none` 核心测试）、两平台构建、Inno Setup 7.1、安装与
+  runtime smoke、两平台 provenance/散列校验都通过后才能发布；上传清单以
   `verify` 生成的 `SHA256SUMS` 为准。不覆盖已发布版本、不移动 tag；fork workflow 留在各 fork 运行。
 - **没有旧 Release 升级覆盖**：旧资产已按迁移决定退出验收输入；不下载旧安装包或根仓历史指纹 commit
   作为硬依赖，也不以 warning skip 冒充升级测试通过。保留安装/使用/卸载、同版本重装与配置保护检查；
-  旧版到新版升级未验证，必须明确披露。配置指纹与迁移数据由 WezTerm fork 维护并随 stage 提供。
-- **安装器只动自己拥有的东西**：Windows 仅写 HKCU 的 PATH、字体与 `Software\GX Shell`，
-  文件占用时拒绝而不杀进程；deb 维护脚本不写用户 HOME。真实安装/卸载只在一次性 runner 或容器执行。
-- **验收环境隔离**：完整 Windows 安装器与生命周期在 GitHub-hosted Windows 验证；同一个 DEB 在
-  Ubuntu GitHub runner 的 Docker Ubuntu 20.04/24.04 容器验证。本机不安装 Docker/WSL，仅以隔离的
-  完整 payload 做硬件 GPU/窗口验收；新增入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 尚待实测。
-  软件 fallback 只能证明软件渲染路径，不能替代硬件 GPU 验收；CPU 构建与 GPU 运行时证据分别记录。
+  旧版到新版升级未验证，必须明确披露。WezTerm 的配置与数据（`~/.config/wezterm` 等）不读取、不迁移、不删除。
+- **安装器只动自己拥有的东西**：Windows 仅写 HKCU 的 PATH、字体、`App Paths\ghostty.exe` 与 `Software\GX Shell`，
+  只卸载单独安装的 Oh My Zsh GX / Herdr GX，不再动单独安装的 WezTerm GX；文件占用时拒绝而不杀进程；deb 维护
+  脚本不写用户 HOME。真实安装/卸载只在一次性 runner 或容器执行。
+- **验收环境隔离**：完整 Windows 安装器与生命周期在 GitHub-hosted Windows 验证；DEB 只支持 Ubuntu 24.04+，在
+  Ubuntu GitHub runner 的 Docker Ubuntu 24.04 容器验证。本机不安装 Docker/WSL，仅以隔离的完整 payload 做硬件
+  GPU/窗口验收；入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 的 `Run` 在锁定 gx_ghostty 修订通过原生路径隔离审计前
+  返回 `BLOCKED_PENDING_ISOLATION_AUDIT`。软件渲染（Mesa llvmpipe）只能证明软件路径，不能替代硬件 GPU 验收；
+  CPU 构建与 GPU 运行时证据分别记录。
 - **历史与同步**：上游同步、组件提交历史与测试留在 fork；根仓不再做 subtree pull，不重写 fork 历史。
-  三个 fork 的远端 `gx` 已于 2026-10-02 提前删除，删除前的 SHA 均已确认是对应默认分支的祖先；删除时整包与
+  当时三个 fork（herdr、ohmyzsh、wezterm）的远端 `gx` 已于 2026-10-02 提前删除，删除前的 SHA 均已确认是对应默认分支的祖先；删除时整包与
   GPU 验收尚未完成。根工作区不含组件目录；仓外迁移副本中 herdr、ohmyzsh 的本地 `gx` 已在 detach 后删除
   （HEAD、文件与 stash 未变），wezterm 不含独立 Git 元数据；不删除迁移副本，也不借清理覆盖用户工作。
 - **根协调仓历史重建（独立 PENDING）**：保留未来以**无父初始化 commit** 建立根协调仓新历史、
