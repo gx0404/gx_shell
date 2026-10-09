@@ -119,14 +119,16 @@ Windows 上 Ghostty GX 默认进入 GX Zsh，Ubuntu 上用 `ghostty-gx -e gx-zsh
 ## 默认 Shell
 
 - **Windows**：开始菜单的「Ghostty GX」不带参数启动 Ghostty GX（安装目录下的 `ghostty\ghostty.exe`），它在安装目录的
-  `bin\gx-zsh.exe` 找到 GX Zsh 并默认进入它；「GX Zsh」快捷方式运行 `ghostty.exe -e "<安装目录>\bin\gx-zsh.exe"`，第一个标签页
-  总是 GX Zsh，之后新开的标签页按 Ghostty GX 的配置。要换成别的 Shell，在 Ghostty GX 的配置文件里设置 `command`
-  （写法见 Ghostty 文档）；「GX Zsh」快捷方式不受影响。
+  `bin\gx-zsh.exe` 找到 GX Zsh 并默认进入它（找不到时依次改用 PowerShell 7、Windows PowerShell、命令提示符）；
+  「GX Zsh」快捷方式运行 `ghostty.exe -e "<安装目录>\bin\gx-zsh.exe"`，第一个标签页总是 GX Zsh，之后新开的标签页按
+  Ghostty GX 的配置。要换成别的 Shell，在设置（`Ctrl+,`）的「Shell」页选，或在 Ghostty GX 的配置文件里设置
+  `command`（写法见 Ghostty 文档）；「GX Zsh」快捷方式不受影响。
 - **Ubuntu**：用 `ghostty-gx -e gx-zsh` 在 Ghostty GX 里打开 GX Zsh。想让 Ghostty GX 默认进入 GX Zsh，在设置对话框
   （`Ctrl+,`）的「Shell」页选 GX Zsh，或在 `~/.config/ghostty/config.ghostty` 里写一行 `command = /usr/bin/gx-zsh`。
 
-两个平台上，新建标签页按钮的下拉菜单（Windows 上右键标签栏的「+」）和主菜单都列出 Ghostty GX 找到的启动配置
-（GX Zsh、herdr、PowerShell、WSL 发行版、登录 Shell 等），可以临时用别的 Shell 开新标签页或新窗口，不改默认值。
+Windows 上标签栏「+」旁的下拉按钮（或右键「+」）与主菜单，Ubuntu 上新建标签页按钮的下拉菜单，都列出 Ghostty GX
+找到的启动配置（GX Zsh、herdr、PowerShell、WSL 发行版、登录 Shell 等），可以临时用别的 Shell 开新标签页或新窗口，
+不改默认值。
 
 herdr 新开的窗格使用 GX Zsh：GX Zsh 第一次启动时生成或接管 `<profile>/herdr/config.toml`，并在其中标记由 GX 管理
 `[terminal]` 的 `default_shell` 与 `shell_mode`（见上文「herdr 配置」）。删掉标记行后这个文件完全归你，GX 不再修改；
@@ -137,8 +139,8 @@ herdr 新开的窗格使用 GX Zsh：GX Zsh 第一次启动时生成或接管 `<
 - Windows 上显卡驱动达不到 OpenGL 4.3 时（例如没有 GPU 的虚拟机或部分远程桌面），Ghostty GX 自动改用随包的 Mesa
   软件渲染（安装目录下的 `ghostty\mesa`），能用但更占 CPU；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
   日志 `%LOCALAPPDATA%\ghostty\logs\ghostty.log` 里 `loaded OpenGL … software=true` 表示正在用软件渲染。
-- 0.3.0 及以前 WezTerm GX 的设置面板、Shell 选择器、壁纸、插件、键位与图片粘贴在 Ghostty GX 里没有对应功能，
-  WezTerm 的配置不会迁移。
+- 0.3.0 及以前 WezTerm GX 的壁纸、插件、键位与图片粘贴在 Ghostty GX 里没有对应功能；它的设置面板与 Shell 选择器
+  由 Ghostty GX 自己的设置界面与启动配置代替。WezTerm 的配置不会迁移。
 - 装好 GX Shell 之后再单独安装 Ghostty GX（gx_ghostty 自己的安装包）仍会冲突：按用户安装时它覆盖同名的「Ghostty GX」
   开始菜单与桌面快捷方式和 `App Paths\ghostty.exe`，卸载两者中任何一个都会删掉这个快捷方式，卸载它还会删掉这一登记
   （GX Shell 不改动指向别处的登记）；为所有用户安装时开始菜单会有两个「Ghostty GX」。再次运行 GX Shell 安装程序会按

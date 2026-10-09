@@ -16,9 +16,10 @@ Ubuntu 24.04 及更新版本。
 
 ### 升级须知（破坏性变化）
 
-- GX Shell 不再包含 WezTerm GX。它的设置面板、Shell 选择器、壁纸、插件、自定义键位和 `Ctrl+V` 粘贴图片
-  （`clipboard_image_paste`）都随之移除，Ghostty GX 里没有对应的迁移。Ghostty GX 使用自己的配置文件：
-  Windows 为 `%LOCALAPPDATA%\ghostty\config.ghostty`，Ubuntu 为 `~/.config/ghostty/config.ghostty`。
+- GX Shell 不再包含 WezTerm GX。它的壁纸、插件、自定义键位和 `Ctrl+V` 粘贴图片（`clipboard_image_paste`）
+  随之移除，Ghostty GX 没有对应功能；它的设置面板与 Shell 选择器由 Ghostty GX 自己的设置界面和启动配置代替
+  （见下文），在 WezTerm GX 里做的设置不会迁移。Ghostty GX 使用自己的配置文件：Windows 为
+  `%LOCALAPPDATA%\ghostty\config.ghostty`，Ubuntu 为 `~/.config/ghostty/config.ghostty`。
 - WezTerm 的配置与数据（`~/.config/wezterm`，Windows 为 `%USERPROFILE%\.config\wezterm`，以及它的插件、备份与日志
   目录）原样保留，GX Shell 不读取、不迁移，也不删除；在 WezTerm 里设置的字体、配色与键位不会带到 Ghostty GX。
 - Windows 上从旧版升级时，安装程序删除旧版自带的 WezTerm GX 程序（安装目录下的 `wezterm`），以及仍指向它的
@@ -38,14 +39,18 @@ Ubuntu 24.04 及更新版本。
 
 ### Ghostty GX
 
-- Windows 上「Ghostty GX」默认打开 GX Zsh；「GX Zsh」快捷方式总在第一个标签页运行 GX Zsh，即使配置了别的
-  默认 Shell。
-- 有自己的设置：`Ctrl+,` 或主菜单的「设置」打开。Ubuntu 上是设置对话框（语言、外观与主题、字体、交互、Shell），
-  改动保存在 `gui-settings.ghostty`，不改你的 `config.ghostty`；Windows 上目前打开配置文件。
-- 界面语言默认中文，可以在运行中切换为英文（配置 `language = en`，改回 `zh-CN` 即中文；Ubuntu 上也可以在设置或
-  主菜单的「语言」里选），菜单、命令面板等不用重启就换成新语言。
-- 启动配置：新建标签页按钮的下拉菜单（Windows 上右键标签栏的「+」）和主菜单列出本机找到的 GX Zsh、herdr、
-  PowerShell、WSL 发行版、登录 Shell 等，点一下就在新标签页或新窗口里启动；`gx-launch-profile` 可以加自己的条目。
+- Windows 上「Ghostty GX」默认打开 GX Zsh（找不到时依次改用 PowerShell 7、Windows PowerShell、命令提示符）；
+  「GX Zsh」快捷方式总在第一个标签页运行 GX Zsh，即使配置了别的默认 Shell。
+- 有自己的设置界面：`Ctrl+,` 或主菜单的「设置…」打开（Windows 上是窗口内的浮层，Ubuntu 上是对话框），分语言、
+  外观（主题与窗口材质，主题移动即预览）、字体、交互、Shell 与关于六页；改动保存在 `gui-settings.ghostty`，不改你的
+  `config.ghostty`。
+- 界面语言默认中文，可以在运行中切换为英文：在设置或主菜单的「语言」里选，或在配置里写 `language = en`（改回
+  `zh-CN` 即中文）；菜单、命令面板等不用重启就换成新语言。
+- 启动配置：Windows 上标签栏「+」旁的下拉按钮（或右键「+」）与主菜单，Ubuntu 上新建标签页按钮的下拉菜单，列出
+  本机找到的 GX Zsh、herdr、PowerShell、WSL 发行版、登录 Shell 等，点一下就在新标签页或新窗口里启动；
+  `gx-launch-profile` 可以加自己的条目。
+- 主菜单（`Ctrl+Shift+M`）、命令面板与可搜索的快捷键速查表（`Ctrl+Shift+/`）；窗口里唯一的标签页运行 herdr
+  时隐藏标签栏（`gx-herdr-app-mode`，默认开启）；终端里只剩空闲的 Shell 时，关闭标签页或窗口不再确认。
 - 渲染需要 OpenGL 4.3。Windows 上显卡驱动达不到时（例如虚拟机或远程桌面），Ghostty GX 改用随包的 Mesa
   软件渲染；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
 - 字体：随包的字体文件不变，仍是 JetBrains Mono Nerd Font（常规、半粗、粗体及各自的斜体）与 Noto Sans CJK
