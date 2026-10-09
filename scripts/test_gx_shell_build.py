@@ -13,6 +13,8 @@ from unittest import mock
 import gx_shell_build as build
 import gx_shell_sources as sources
 
+VERSION_STRING = "1.3.2-gx.0.1.0"
+
 
 class BuildDriverTests(unittest.TestCase):
     def test_safe_path_rejects_unsafe_paths(self):
@@ -27,7 +29,7 @@ class BuildDriverTests(unittest.TestCase):
 
     def test_real_lock_has_three_independent_components(self):
         lock = build.read_lock(build.ROOT / "components.lock.json")
-        self.assertEqual(set(lock["components"]), {"herdr", "ohmyzsh", "wezterm"})
+        self.assertEqual(set(lock["components"]), {"herdr", "ohmyzsh", "gx_ghostty"})
         for name, entry in lock["components"].items():
             self.assertEqual(entry["repository"], "gx0404/" + name)
             self.assertEqual(entry["branch"], sources.COMPONENT_BRANCHES[name])
@@ -174,25 +176,66 @@ class BuildDriverTests(unittest.TestCase):
                 checked = {"lock_digest": "fixture", "components": {}}
                 with mock.patch.dict(os.environ, {}, clear=True), \
                         mock.patch.object(sources, "checkout", return_value=checked), \
-                        mock.patch.object(build, "planner", return_value={}), \
+                        mock.patch.object(build, "planner", return_value={}) as planner, \
+                        mock.patch.object(build, "ghostty_version_string", return_value=VERSION_STRING), \
                         mock.patch.object(build, "windows_environment", return_value=selected) as activate, \
                         mock.patch.object(build, "run") as run, redirect_stdout(io.StringIO()):
                     result = build.main(["--platform", platform, "--work-root", str(work),
                                          "--jobs", "4", "--offline"])
                 self.assertEqual(result, 0)
+                self.assertEqual(planner.call_args.args[5], "herdr" if platform == "windows" else "ohmyzsh")
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(len(commands), 5)
+                ghostty = sources_root / "gx_ghostty"
+                stage, verify = commands[:2]
+                # The consumer contract of the locked gx_ghostty: gx_package.py builds with its pinned Zig.
+                self.assertEqual(stage[2:5], [str(ghostty / "scripts/gx_package.py"),
+                                              "windows" if platform == "windows" else "deb", "--build"])
+                self.assertEqual(stage[stage.index("--stage-dir") + 1], str(work / "ghostty-stage"))
+                self.assertEqual(stage[stage.index("--version-string") + 1], VERSION_STRING)
+                self.assertTrue(Path(stage[stage.index("--cache-dir") + 1]).is_relative_to(work))
+                self.assertNotIn("--prefix", stage)
+                self.assertNotIn("--install-deps", stage)
+                self.assertEqual(verify[3:], ["verify-stage", str(work / "ghostty-stage")])
+                for call in run.call_args_list[:2]:
+                    self.assertEqual(call.kwargs["cwd"], ghostty)
+                    self.assertNotIn("RUSTUP_TOOLCHAIN", call.kwargs["env"])
+                zig_env = run.call_args_list[0].kwargs["env"]
+                for key in ("ZIG_GLOBAL_CACHE_DIR", "ZIG_LOCAL_CACHE_DIR"):
+                    self.assertTrue(Path(zig_env[key]).is_relative_to(work), key)
                 if platform == "windows":
                     activate.assert_called_once()
-                    for call in run.call_args_list:
+                    for call in run.call_args_list[2:]:
                         self.assertEqual(call.kwargs["env"], selected)
                 else:
                     activate.assert_not_called()
-                    self.assertNotIn("RUSTUP_TOOLCHAIN", run.call_args_list[0].kwargs["env"])
-                    self.assertIn("--container", run.call_args_list[0].args[0])
-                self.assertIn("--allow-dirty", run.call_args_list[1].args[0])
-                self.assertIn("--allow-dirty", run.call_args_list[2].args[0])
+                    for call in run.call_args_list:
+                        self.assertNotIn("RUSTUP_TOOLCHAIN", call.kwargs["env"])
+                self.assertIn("--allow-dirty", commands[2])
+                self.assertIn("--allow-dirty", commands[3])
+                self.assertIn("--ghostty-stage", commands[3])
                 receipt = json.loads((work / "build-report.json").read_text(encoding="utf-8"))
                 self.assertEqual(receipt["builder"], "local")
                 self.assertIs(receipt["publishable"], False)
+                self.assertEqual(receipt["ghostty_version_string"], VERSION_STRING)
+
+    def test_ghostty_version_string_comes_from_the_locked_checkout(self):
+        temp = tempfile.TemporaryDirectory(prefix="gx-build-vs-")
+        self.addCleanup(temp.cleanup)
+        checkout = Path(temp.name)
+        (checkout / "scripts").mkdir()
+        release = checkout / "scripts/gx_release.py"
+        for value, ok in ((VERSION_STRING, True), ("1.3.2", False), ("1.3.2-gx.0.1", False)):
+            with self.subTest(value=value):
+                release.write_text(
+                    "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+                    "class Info:\n    version_string = %r\n"
+                    "def release_info(root):\n    return Info()\n" % value, encoding="utf-8")
+                if ok:
+                    self.assertEqual(build.ghostty_version_string(checkout, dict(os.environ)), value)
+                else:
+                    with self.assertRaisesRegex(build.BuildError, "version string"):
+                        build.ghostty_version_string(checkout, dict(os.environ))
 
     def test_main_refuses_ci_identity_and_tokens_before_planning(self):
         for key in ("GITHUB_ACTIONS", "GH_TOKEN", "GITHUB_TOKEN"):
@@ -206,6 +249,7 @@ class BuildDriverTests(unittest.TestCase):
                 mock.patch.object(sources, "checkout",
                                   return_value={"lock_digest": "fixture", "components": {}}), \
                 mock.patch.object(build, "planner", return_value=report or {}), \
+                mock.patch.object(build, "ghostty_version_string", return_value=VERSION_STRING), \
                 mock.patch.object(build, "windows_environment", return_value={}), \
                 mock.patch.object(build, "run"), \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -237,6 +281,7 @@ class BuildDriverTests(unittest.TestCase):
                 mock.patch.object(sources, "checkout",
                                   return_value={"lock_digest": "fixture", "components": {}}) as checkout, \
                 mock.patch.object(build, "planner", return_value={}), \
+                mock.patch.object(build, "ghostty_version_string", return_value=VERSION_STRING), \
                 mock.patch.object(build, "run"), \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(build.main(["--platform", "linux", "--work-root",
@@ -291,7 +336,7 @@ class BuildDriverTests(unittest.TestCase):
         reports = [
             {"paths": {"build_root": str(root / "gx-b"), "components": {}}},
             {"paths": {"build_root": str(build_root / "run2"),
-                       "components": {"wezterm": {"paths": {"cargo_target": str(root / "target")}}}}},
+                       "components": {"gx_ghostty": {"paths": {"cargo_target": str(root / "target")}}}}},
         ]
         for index, report in enumerate(reports):
             with self.subTest(index=index):
@@ -321,10 +366,11 @@ class BuildDriverTests(unittest.TestCase):
                 mock.patch.object(sources, "checkout",
                                   return_value={"lock_digest": "fixture", "components": {}}), \
                 mock.patch.object(build, "planner", return_value={}), \
+                mock.patch.object(build, "ghostty_version_string", return_value=VERSION_STRING), \
                 mock.patch.object(build, "run") as run, \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(build.main(["--platform", "linux", "--work-root", str(work), "--jobs", "4"]), 0)
-        stage_call = run.call_args_list[1]
+        stage_call = run.call_args_list[2]
         stage_work = Path(stage_call.args[0][3])
         self.assertEqual(stage_work.parent, work)
         self.assertEqual(stage_call.kwargs["env"]["GX_LOCAL_BUILD_ROOT"], str(work))

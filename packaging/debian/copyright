@@ -1,10 +1,10 @@
 GX Shell (https://github.com/gx0404/gx_shell) bundles independently licensed
 components. Their license texts are installed alongside them:
 
- - WezTerm GX, based on WezTerm (https://github.com/wezterm/wezterm), MIT License:
-   /usr/share/doc/wezterm-gx/copyright
-   Its bundled configuration and plugins keep their own license files under:
-   /usr/share/wezterm-gx/dotfiles/
+ - Ghostty GX, based on Ghostty (https://github.com/ghostty-org/ghostty), MIT
+   License, with its JetBrains Mono Nerd Font and Noto Sans CJK fonts (SIL Open
+   Font License 1.1):
+   /usr/share/doc/ghostty-gx/copyright
  - Oh My Zsh GX, based on Oh My Zsh (https://github.com/ohmyzsh/ohmyzsh), MIT License:
    /usr/share/doc/ohmyzsh-gx/licenses/ohmyzsh-LICENSE.txt
  - herdr (https://github.com/herdrdev/herdr), Apache License 2.0, together with

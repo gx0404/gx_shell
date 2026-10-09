@@ -9,7 +9,7 @@ or creates directories. Both (default) prints JSON followed by assignments.
 RepoRoot is the coordinator checkout and may contain non-ASCII characters.
 BuildRoot must resolve to a new run directory directly below
 <repo>\.local\build; when omitted, a fresh plan-<timestamp> name there is
-proposed. ComponentRoots maps herdr/ohmyzsh/wezterm to independent checkouts
+proposed. ComponentRoots maps herdr/ohmyzsh/gx_ghostty to independent checkouts
 below <repo>\.local\sources; absent entries default to
 <repo>\.local\sources\<name>. ComponentRevisions optionally pins their full
 commit SHAs; absent checkouts remain unverified. A monorepo parent HEAD is
@@ -36,7 +36,7 @@ param(
     [string]$RepoRoot = '',
     [string]$Toolchain = $env:RUSTUP_TOOLCHAIN,
     [ValidateSet('x86_64-pc-windows-msvc')][string]$Target = 'x86_64-pc-windows-msvc',
-    [ValidateSet('herdr', 'ohmyzsh', 'wezterm')][string]$Component = 'wezterm',
+    [ValidateSet('herdr', 'ohmyzsh', 'gx_ghostty')][string]$Component = 'herdr',
     [hashtable]$ComponentRoots = @{},
     [hashtable]$ComponentRevisions = @{},
     [switch]$UseSccache,
@@ -334,7 +334,7 @@ function Get-NativeTools {
         inno = (Get-FileTool (Find-Executable 'ISCC.exe' $innoCandidates))
         powershell = (Get-FileTool (Find-Executable 'powershell.exe'))
         pwsh = (Get-FileTool (Find-Executable 'pwsh.exe'))
-        zig = (Get-FileTool (Find-Executable 'zig.exe'))
+        zig = (Get-FileTool (Find-Executable 'zig.exe' @($env:GX_GHOSTTY_ZIG, $env:ZIG)))
     }
 }
 
@@ -380,7 +380,7 @@ try {
     if (-not [IO.Directory]::Exists($RepoRoot)) { Fail 'RepoRoot must be an existing coordinator checkout.' }
     foreach ($mapping in @($ComponentRoots, $ComponentRevisions)) {
         foreach ($key in $mapping.Keys) {
-            if ($key -notin @('herdr', 'ohmyzsh', 'wezterm')) { Fail 'Component mappings accept only herdr, ohmyzsh and wezterm.' }
+            if ($key -notin @('herdr', 'ohmyzsh', 'gx_ghostty')) { Fail 'Component mappings accept only herdr, ohmyzsh and gx_ghostty.' }
         }
     }
     $root = Get-BuildRoot $BuildRoot $RepoRoot
@@ -399,7 +399,7 @@ try {
     $toolchainKey = Get-Key ($fingerprint | ConvertTo-Json -Depth 6 -Compress)
     $components = [ordered]@{}
     $git = Find-Executable 'git.exe'
-    foreach ($name in @('herdr', 'ohmyzsh', 'wezterm')) {
+    foreach ($name in @('herdr', 'ohmyzsh', 'gx_ghostty')) {
         $sourceRoot = Join-Path $sourcesBase $name
         if ($ComponentRoots.ContainsKey($name) -and [string]$ComponentRoots[$name]) {
             $sourceRoot = [string]$ComponentRoots[$name]
@@ -465,7 +465,7 @@ try {
             sources_root = $sourcesBase; exists = [IO.Directory]::Exists($root)
             toolchain_key = $toolchainKey; fingerprint = $fingerprint; components = $components }
         environment = $environment; diagnostics = @($script:Diagnostics.ToArray()); warnings = $warnings
-        gpu = 'Not probed or used for compilation; GPU validation belongs only to later WezTerm runtime smoke.' }
+        gpu = 'Not probed or used for compilation; GPU validation belongs only to later Ghostty GX runtime smoke.' }
     if ($Format -ne 'Environment') { $report | ConvertTo-Json -Depth 12 }
     if ($Format -ne 'Json') {
         '# Proposed PowerShell process environment; review before applying. Build steps must remain sequential.'

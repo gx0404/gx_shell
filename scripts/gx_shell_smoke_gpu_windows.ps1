@@ -1,6 +1,6 @@
-# Non-installing Windows GPU gate. VerifyInputs never executes payload binaries.
-# Run is deliberately blocked until the locked product has audited native path isolation.
-# CheckEvidence validates captured material, not desktop interaction or visual acceptance.
+# Non-installing Windows GPU gate for Ghostty GX. VerifyInputs never executes payload binaries.
+# Run is deliberately blocked until the locked Ghostty GX revision has an audited native path isolation
+# contract. CheckEvidence validates captured material, not desktop interaction or visual acceptance.
 param(
     [ValidateSet('VerifyInputs', 'Run', 'CheckEvidence')][string]$Action = 'VerifyInputs',
     [Parameter(Mandatory = $true)][string]$Installer,
@@ -11,7 +11,7 @@ param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ExpectedLockDigest,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ExpectedManifestSha256,
     [Parameter(Mandatory = $true)][string]$Evidence,
-    [ValidateSet('OpenGL', 'WebGpu')][string]$Renderer = 'OpenGL',
+    [ValidateSet('OpenGL')][string]$Renderer = 'OpenGL',
     [string]$ObservationDirectory = '',
     [string]$Python = 'python'
 )
@@ -27,14 +27,17 @@ import struct
 import sys
 import zlib
 
+AUDITED_GHOSTTY_REVISION = 'f9e67e5f18f1ab7506f50e216f09d423c94be4b3'
 ISOLATION_BLOCKER = (
-    'BLOCKED_UNSAFE_KNOWNFOLDERS: audited WezTerm config::HOME_DIR, DATA_DIR and CACHE_DIR '
-    'use dirs-next Windows KnownFolders (Profile, RoamingAppData, LocalAppData); RUNTIME_DIR/logs '
-    'fall back to that native HOME. Launcher USERPROFILE/APPDATA/XDG overrides do not redirect '
-    'these native paths. No payload executable, GUI, installer or uninstaller may run here. '
-    'A new locked revision requires a fresh source audit and an isolated native path probe; '
-    'environment variables alone, --skip-config and --config-file are not an isolation boundary.'
+    'BLOCKED_PENDING_ISOLATION_AUDIT: at the audited revision Ghostty GX resolves its configuration, cache '
+    'and state from XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_STATE_HOME or LOCALAPPDATA, writes its log to '
+    'LOCALAPPDATA\\ghostty\\logs and takes its home from HOMEDRIVE/HOMEPATH; GX Zsh and herdr keep their '
+    'profile under LOCALAPPDATA. No KnownFolders lookup was found there, but environment variables are not '
+    'an isolation boundary until the locked revision is audited again and an isolated native path probe '
+    'passes. No payload executable, GUI, installer or uninstaller may run here.'
 )
+# Ghostty GX logs the implementation behind its WGL context once the render thread starts.
+OPENGL_LINE = re.compile(r'loaded OpenGL ([0-9]+)\.([0-9]+) vendor=(.*?) renderer=(.*?) software=(true|false)\s*$')
 
 def regular(package, path):
     package.safe_directory(path.absolute().parent)
@@ -73,7 +76,7 @@ def verify_inputs(package, installer, metadata, lock_path, assembly, coordinator
     sums.append(f'{package.digest(metadata)}  {metadata.name}')
     package.require(sorted(sidecar.read_text(encoding='ascii').splitlines()) == sorted(sums), 'stale package sidecar')
     return {
-        'schema': 1, 'status': 'INPUTS_VERIFIED', 'runtime_status': 'BLOCKED_UNSAFE_KNOWNFOLDERS',
+        'schema': 1, 'status': 'INPUTS_VERIFIED', 'runtime_status': 'BLOCKED_PENDING_ISOLATION_AUDIT',
         'package_sha256': package.digest(installer), 'package_manifest_sha256': package.digest(metadata),
         'assembly_manifest_sha256': package.digest(assembly / 'assembly-manifest.json'),
         'coordinator': info['coordinator'], 'components_lock_digest': checksum, 'components': info['components'],
@@ -83,32 +86,22 @@ def verify_inputs(package, installer, metadata, lock_path, assembly, coordinator
     }
 
 def renderer_evidence(text, renderer):
+    if renderer != 'OpenGL':
+        raise ValueError('Ghostty GX renders with OpenGL only')
     banned = r'(?i)\b(cpu|warp|llvmpipe|softpipe|swiftshader|software|fallback)\b|basic render|gdi generic|microsoft remote'
-    if renderer == 'OpenGL':
-        lines = [line for line in text.splitlines() if 'OpenGL initialized! OpenGL:' in line]
-        if not lines or any(re.search(banned, line) for line in lines):
-            raise ValueError('missing or software OpenGL renderer evidence')
-        if any(not re.search(r'(?i)intel|nvidia|amd|radeon|geforce|iris', line) for line in lines):
+    lines = [line for line in text.splitlines() if OPENGL_LINE.search(line)]
+    if not lines:
+        raise ValueError('missing Ghostty GX OpenGL implementation evidence')
+    for line in lines:
+        major, minor, vendor, name, software = OPENGL_LINE.search(line).groups()
+        if software != 'false' or re.search(banned, vendor + ' ' + name):
+            raise ValueError('software OpenGL renderer evidence (bundled Mesa or a software driver)')
+        if (int(major), int(minor)) < (4, 3):
+            raise ValueError('the system OpenGL driver is below 4.3')
+        if not re.search(r'(?i)intel|nvidia|amd|radeon|geforce|iris|ati technologies', vendor + ' ' + name):
             raise ValueError('unrecognized hardware OpenGL renderer; review the adapter explicitly')
-        if 'OpenGL initialized! WebGPU:' in text:
-            raise ValueError('mixed renderer cases in OpenGL evidence')
-    else:
-        lines = [line for line in text.splitlines() if 'Using adapter: AdapterInfo {' in line]
-        if not lines or any(re.search(banned, line) for line in lines):
-            raise ValueError('missing or software WebGPU selected-adapter evidence')
-        if any(not re.search(r'device_type: (IntegratedGpu|DiscreteGpu)\b', line) or
-               not re.search(r'backend: (Dx12|Vulkan|Gl)\b', line) for line in lines):
-            raise ValueError('selected WebGPU adapter is not a hardware device')
-        initialized = [line for line in text.splitlines() if 'OpenGL initialized! WebGPU:' in line]
-        if not initialized:
-            raise ValueError('selected adapter alone does not prove initialized WebGPU rendering')
-        if any(re.search(banned, line) for line in initialized):
-            raise ValueError('software WebGPU initialized renderer')
-        if any('OpenGL initialized! OpenGL:' in line for line in text.splitlines()):
-            raise ValueError('mixed renderer cases in WebGPU evidence')
-        lines += initialized
-    if re.search(r'(?i)failed to create RenderState|panicked at|Error loading configuration|plugin load failed', text):
-        raise ValueError('renderer/configuration failure in runtime log')
+    if re.search(r'(?i)OpenGL version is too old|OpenGLOutdated|software OpenGL \(.*\) is unavailable|panic', text):
+        raise ValueError('renderer failure in runtime log')
     return lines
 
 def png_dimensions(path):
@@ -152,10 +145,8 @@ def check_evidence(package, folder, receipt, renderer):
     for key in ('package_sha256', 'package_manifest_sha256', 'assembly_manifest_sha256', 'components_lock_digest'):
         package.require(observation.get(key) == receipt[key], f'evidence package identity mismatch: {key}')
     package.require(observation.get('renderer') == renderer, 'renderer case mismatch')
-    if renderer == 'OpenGL':
-        package.require(observation.get('default_front_end') is True, 'OpenGL must exercise the packaged default')
-    else:
-        package.require(observation.get('webgpu_force_fallback_adapter') is False, 'WebGPU must explicitly disable fallback')
+    package.require(observation.get('ghostty_gx_opengl_override') is False,
+                    'Ghostty GX must run its packaged default: GHOSTTY_GX_OPENGL unset, system OpenGL driver first')
     token = observation.get('token')
     package.require(isinstance(token, str) and re.fullmatch('[0-9a-f]{32}', token), 'missing unique input token')
     files = observation.get('files')
@@ -183,7 +174,7 @@ def main(argv):
     sys.path.insert(0, str(Path(repo) / 'scripts'))
     import gx_shell_package as package
     package.require(action in ('VerifyInputs', 'Run', 'CheckEvidence'), 'invalid action')
-    package.require(renderer in ('OpenGL', 'WebGpu'), 'invalid renderer')
+    package.require(renderer == 'OpenGL', 'invalid renderer')
     installer, metadata, lock_path, assembly, evidence = map(Path, (installer, metadata, lock_path, assembly, evidence))
     package.require(evidence.is_absolute() and not evidence.exists() and not evidence.is_symlink(),
                     'evidence must be a new absolute directory')
@@ -193,36 +184,41 @@ def main(argv):
         package.require(not evidence.is_relative_to(source.resolve()), 'evidence must be outside the input trees')
     receipt = verify_inputs(package, installer, metadata, lock_path, assembly, coordinator, lock_digest, manifest_hash)
     receipt.update(requested_renderer=renderer, isolation_blocker=ISOLATION_BLOCKER, isolation_audit={
-        'audited_wezterm_revision': '4b219eea6a46eab9de03444612b90766d1d0d806',
-        'native_paths': 'config/src/lib.rs HOME_DIR; config/src/config.rs compute_data_dir/compute_cache_dir/compute_runtime_dir',
-        'plugins': 'lua-api-crates/plugin/src/lib.rs RepoSpec::plugins_dir uses config::DATA_DIR',
-        'logs': 'env-bootstrap/src/ringlog.rs uses config::RUNTIME_DIR',
-        'library': 'dirs-next 2.0.0 src/win.rs -> dirs-sys-next 0.1.2 SHGetKnownFolderPath',
-        'launcher_only': 'scripts/gx-launcher/os/windows.rs uses USERPROFILE/APPDATA/XDG_CONFIG_HOME',
-        'other_revisions': 'UNREVIEWED: this gate stays closed until a new native isolation contract is audited',
+        'audited_ghostty_revision': AUDITED_GHOSTTY_REVISION,
+        'locked_ghostty_revision': receipt['components'][package.GHOSTTY]['revision'],
+        'config_cache_state': 'src/os/xdg.zig: XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_STATE_HOME, else LOCALAPPDATA',
+        'logs': 'src/apprt/win32/file_log.zig: LOCALAPPDATA\\ghostty\\logs\\ghostty.log',
+        'home': 'src/os/homedir.zig: HOMEDRIVE + HOMEPATH',
+        'fonts': 'src/font/discovery.zig: SystemRoot\\Fonts and LOCALAPPDATA\\Microsoft\\Windows\\Fonts',
+        'profiles': 'src/gx/profiles.zig: GX Zsh from LOCALAPPDATA\\Programs\\GXShell\\bin, the executable directory or PATH',
+        'known_folders': 'none in src at the audited revision',
+        'other_revisions': 'UNREVIEWED: this gate stays closed until the locked revision is audited and an isolated native path probe passes',
     })
     if action == 'CheckEvidence':
         package.require(bool(observation), 'CheckEvidence requires -ObservationDirectory')
         receipt['evidence_check'] = check_evidence(package, Path(observation), receipt, renderer)
         receipt['status'] = 'EVIDENCE_READY'
     elif action == 'Run':
-        receipt['status'] = 'BLOCKED_UNSAFE_KNOWNFOLDERS'
+        receipt['status'] = 'BLOCKED_PENDING_ISOLATION_AUDIT'
     evidence.mkdir()
     package.write_json(evidence / 'gpu-smoke.json', receipt)
     package.write_json(evidence / 'evidence-contract.json', {
-        'schema': 1, 'required_cases': ['OpenGL packaged default', 'WebGpu hardware separate case'],
-        'isolation_required': ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'KnownFolders Profile/Roaming/Local',
-                               'GX Zsh profile', 'herdr configuration', 'XDG config/cache/data/state/runtime',
-                               'TEMP/TMP/TMPDIR', 'WezTerm logs/pki/socket/cache/config/plugins/backups'],
+        'schema': 1, 'required_cases': ['OpenGL on the system driver: the packaged default, software=false'],
+        'isolation_required': ['HOME', 'HOMEDRIVE/HOMEPATH', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+                               'XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_STATE_HOME', 'TEMP/TMP/TMPDIR',
+                               'Ghostty GX configuration, cache, state and logs', 'GX Zsh profile',
+                               'herdr configuration', 'user font registrations'],
         'forbidden': ['installer execution', 'registry or PATH writes', 'font registration', 'killing existing processes',
-                      'environment-only isolation claims', 'CPU/WARP/llvmpipe/fallback renderer', 'handle-only PASS'],
+                      'environment-only isolation claims', 'GHOSTTY_GX_OPENGL=software',
+                      'bundled Mesa/llvmpipe/WARP/GDI Generic renderer', 'handle-only PASS'],
         'observation_json': {**{key: receipt[key] for key in ('package_sha256', 'package_manifest_sha256',
                              'assembly_manifest_sha256', 'components_lock_digest')},
                              'renderer': renderer, 'token': '<32 lowercase hex generated per run>',
-                             'default_front_end': renderer == 'OpenGL', 'webgpu_force_fallback_adapter': False,
+                             'ghostty_gx_opengl_override': False,
                              'files': {name: '<sha256>' for name in
                                        ('renderer.log', 'input.txt', 'echo.txt', 'before.png', 'after.png')}},
-        'log_filter': 'WEZTERM_LOG=info,wezterm_gui::termwindow=trace',
+        'renderer_log': 'the isolated LOCALAPPDATA\\ghostty\\logs\\ghostty.log of the run, with the line '
+                        '"loaded OpenGL X.Y vendor=... renderer=... software=false"',
         'review_required': 'Use approved desktop tooling to type the unique marker, observe echo, resize/repaint and read both PNGs. '
                            'Keep action receipts, process identity, native path probes and before/after host baselines. '
                            'Screenshot failure fails the case. EVIDENCE_READY is never GPU acceptance.',

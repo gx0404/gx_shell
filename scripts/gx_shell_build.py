@@ -22,7 +22,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPONENTS = ("herdr", "ohmyzsh", "wezterm")
+COMPONENTS = ("herdr", "ohmyzsh", "gx_ghostty")
 LOCAL_DIRNAME = ".local"
 BUILD_DIRNAME = "build"
 SOURCES_DIRNAME = "sources"
@@ -36,6 +36,9 @@ PLATFORMS = {
     "windows": "windows-x64",
     "linux": "ubuntu-amd64",
 }
+GHOSTTY_STAGE_PLATFORMS = {"windows": "windows", "linux": "deb"}
+GHOSTTY_VERSION_STRING = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+                                    r"-gx\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
 class BuildError(RuntimeError):
@@ -218,6 +221,37 @@ def windows_environment(report: dict, parent: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def ghostty_version_string(checkout: Path, env: dict[str, str]) -> str:
+    """The version string the locked Ghostty GX checkout derives (build.zig.zon and its CHANGELOG)."""
+    code = ("import sys; sys.path.insert(0, 'scripts'); import gx_release; "
+            "print(gx_release.release_info(gx_release.ROOT).version_string)")
+    result = subprocess.run([sys.executable, "-B", "-c", code], cwd=checkout, env=env,
+                            capture_output=True, text=True, encoding="utf-8", check=False)
+    value = result.stdout.strip()
+    require(result.returncode == 0 and GHOSTTY_VERSION_STRING.fullmatch(value) is not None,
+            "cannot derive the Ghostty GX version string from the locked checkout")
+    return value
+
+
+def ghostty_stage_commands(platform: str, checkout: Path, work: Path, stage: Path,
+                           version_string: str) -> list[tuple[list[str], dict[str, str]]]:
+    """Stage the locked Ghostty GX through its consumer contract: scripts/gx_package.py --build.
+
+    gx_package.py builds with the checkout's pinned Zig (the ReleaseFast win32 app on Windows; on
+    Linux its Ubuntu 24.04 GTK recipe, which needs an Ubuntu 24.04 host with the build dependencies
+    already installed), verifies the stage and removes its temporary prefix. Zig caches and pinned
+    downloads stay in the run directory.
+    """
+    ghostty_work = work / "ghostty"
+    zig_cache = {"ZIG_GLOBAL_CACHE_DIR": str(ghostty_work / "zig-global"),
+                 "ZIG_LOCAL_CACHE_DIR": str(ghostty_work / "zig-local")}
+    package = [sys.executable, "-B", str(checkout / "scripts/gx_package.py"), GHOSTTY_STAGE_PLATFORMS[platform],
+               "--build", "--stage-dir", str(stage), "--version-string", version_string,
+               "--cache-dir", str(ghostty_work / "package-cache")]
+    verify = [sys.executable, "-B", str(checkout / "scripts/gx_package.py"), "verify-stage", str(stage)]
+    return [(package, zig_cache), (verify, {})]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=tuple(PLATFORMS), required=True)
@@ -254,15 +288,15 @@ def main(argv: list[str] | None = None) -> int:
                     "memory budget must be a positive decimal")
         import gx_shell_sources as sources
         checked = sources.checkout(lock_path, source_root, list(COMPONENTS), offline=args.offline)
-        report = planner(ROOT, source_root, lock, args.jobs, args.memory_budget_gb,
-                         "wezterm" if args.platform == "windows" else "ohmyzsh", work)
+        # herdr is the only Rust/MSVC build; Ghostty GX builds with its own pinned Zig.
+        selected_name = "herdr" if args.platform == "windows" else "ohmyzsh"
+        report = planner(ROOT, source_root, lock, args.jobs, args.memory_budget_gb, selected_name, work)
         planner_paths_inside(report, work)
         jobs = args.jobs or int(report.get("budget", {}).get("cpu_jobs", 4))
         zsh_jobs = min(jobs, 8)
         work.mkdir(parents=True)
         commands: list[dict] = []
         env = os.environ.copy()
-        selected_name = "wezterm" if args.platform == "windows" else "ohmyzsh"
         selected_paths = report.get("paths", {}).get("components", {}).get(selected_name, {}).get("paths", {})
         env.update({"GX_LOCAL_BUILD_ROOT": str(work), "GX_CPU_JOBS": str(jobs),
                     "GX_ZSH_JOBS": str(zsh_jobs), "CARGO_BUILD_JOBS": str(jobs),
@@ -282,17 +316,14 @@ def main(argv: list[str] | None = None) -> int:
                               "lock_digest": checked["lock_digest"], "planner": report},
                              ensure_ascii=False, indent=2))
             return 0
-        wezterm = source_root / "wezterm"
+        ghostty = source_root / "gx_ghostty"
         shell_work = work / "shell"
-        wezterm_stage = work / "wezterm-stage"
+        ghostty_stage = work / "ghostty-stage"
+        version_string = ghostty_version_string(ghostty, env)
+        for command, extra in ghostty_stage_commands(args.platform, ghostty, work, ghostty_stage, version_string):
+            run(command, cwd=ghostty, env={**env, **extra}, log=commands)
         if args.platform == "windows":
             env = windows_environment(report, env)
-            run([sys.executable, "-B", str(wezterm / "scripts/gx_package.py"), "windows",
-                 "--stage-dir", str(wezterm_stage)], cwd=wezterm, env=env, log=commands)
-        else:
-            run([sys.executable, "-B", str(wezterm / "scripts/gx_package.py"), "deb", "--container",
-                 "--cache-dir", str(work / "wezterm-cache"), "--stage-dir", str(wezterm_stage)],
-                cwd=wezterm, env=env, log=commands)
         stage_command = ["bash", str(ROOT / "scripts/gx_shell_stage_shell.sh"), platform, str(shell_work),
                          "--ohmyzsh-root", str(source_root / "ohmyzsh"), "--herdr-root", str(source_root / "herdr"),
                          "--components-lock", str(lock_path), "--component-revision", lock["components"]["ohmyzsh"]["revision"],
@@ -302,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
         dist = work / "dist"
         assemble = [sys.executable, "-B", str(ROOT / "scripts/gx_shell_package.py"), "assemble",
                     "--platform", args.platform, "--components-lock", str(lock_path),
-                    "--wezterm-stage", str(wezterm_stage), "--ohmyzsh-stage", str(shell_work / "ohmyzsh-stage"),
+                    "--ghostty-stage", str(ghostty_stage), "--ohmyzsh-stage", str(shell_work / "ohmyzsh-stage"),
                     "--output", str(assembly), "--allow-dirty"]
         run(assemble, cwd=ROOT, env=env, log=commands)
         build = [sys.executable, "-B", str(ROOT / "scripts/gx_shell_package.py"), "build",
@@ -313,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
         (work / "build-report.json").write_text(json.dumps({
             "schema": 1, "platform": args.platform, "builder": "local", "publishable": False,
             "lock_digest": checked["lock_digest"], "components": checked["components"],
+            "ghostty_version_string": version_string,
             "jobs": jobs, "zsh_jobs": zsh_jobs, "commands": commands,
             "planner": report, "work_root": str(work), "sources_root": str(source_root),
         }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")

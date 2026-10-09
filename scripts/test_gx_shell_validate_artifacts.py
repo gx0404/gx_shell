@@ -341,13 +341,17 @@ class PackageAndReceiptTests(unittest.TestCase):
         smoke, _ = self.smoke("linux")
         package.write_json(evidence / "smoke-provenance.json", smoke)
         (evidence / "result.txt").write_text("PASS: fixture lifecycle\n")
-        (evidence / "os-release").write_text('ID=ubuntu\nVERSION_ID="20.04"\n')
-        receipt = validation.record_smoke(self.input_path, self.lock, VALIDATOR, "ubuntu-20.04", evidence, "success")
+        (evidence / "os-release").write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        receipt = validation.record_smoke(self.input_path, self.lock, VALIDATOR, "ubuntu-24.04", evidence, "success")
         self.assertEqual(receipt["source"]["coordinator_sha"], fixtures.SHA)
         self.assertEqual(receipt["validator"]["sha"], VALIDATOR["sha"])
-        for outcome, target in (("failure", "ubuntu-20.04"), ("skipped", "ubuntu-20.04"), ("success", "ubuntu-24.04")):
+        for outcome, target in (("failure", "ubuntu-24.04"), ("skipped", "ubuntu-24.04"), ("success", "windows")):
             with self.subTest(outcome=outcome, target=target), self.assertRaises(ValueError):
                 validation.record_smoke(self.input_path, self.lock, VALIDATOR, target, evidence, outcome)
+        (evidence / "os-release").write_text('ID=ubuntu\nVERSION_ID="22.04"\n')
+        with self.assertRaisesRegex(ValueError, "Ubuntu version"):
+            validation.record_smoke(self.input_path, self.lock, VALIDATOR, "ubuntu-24.04", evidence, "success")
+        self.assertNotIn("ubuntu-20.04", validation.TARGETS)
 
     def receipts(self):
         root = self.root / "receipts"
@@ -380,7 +384,7 @@ class PackageAndReceiptTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validation.aggregate(self.input_path, self.lock, VALIDATOR, root, fixtures.SHA)
         path.unlink()
-        with self.assertRaisesRegex(ValueError, "all three"):
+        with self.assertRaisesRegex(ValueError, "all fresh smoke receipts"):
             validation.aggregate(self.input_path, self.lock, VALIDATOR, root, fixtures.SHA)
 
     def test_api_cli_fixture_downloads_verifies_and_keeps_original_provenance(self):
@@ -477,13 +481,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("validate-artifacts-smoke-linux:", validate)
         self.assertIn("validate-artifacts-smoke-windows:", validate)
         self.assertIn("validate-artifacts-verify:", validate)
-        self.assertIn("ubuntu: ['20.04', '24.04']", validate)
+        self.assertIn("ubuntu: ['24.04']", validate)
         self.assertIn("runs-on: windows-2025", validate)
         self.assertIn("python scripts/gx_shell_validate_artifacts.py inspect", validate)
         self.assertIn("python scripts/gx_shell_validate_artifacts.py download", validate)
         self.assertIn("python scripts/gx_shell_validate_artifacts.py record", validate)
         self.assertIn("python scripts/gx_shell_validate_artifacts.py aggregate", validate)
-        for name in ("wezterm-windows", "wezterm-linux", "wezterm-tests", "shell-windows", "shell-linux",
+        for name in ("ghostty-windows", "ghostty-linux", "ghostty-tests", "shell-windows", "shell-linux",
                      "ohmyzsh-posix", "package-windows", "package-linux", "smoke-linux", "verify"):
             match = re.search(r"^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][a-z0-9-]*:|\Z)", release, re.M | re.S)
             self.assertIsNotNone(match, name)
@@ -509,7 +513,7 @@ class WorkflowTests(unittest.TestCase):
     def test_current_smokes_use_original_packages_lock_and_locked_probe(self):
         linux = self.job("validate-artifacts-smoke-linux")
         windows = self.job("validate-artifacts-smoke-windows")
-        self.assertIn("ubuntu: ['20.04', '24.04']", linux)
+        self.assertIn("ubuntu: ['24.04']", linux)
         self.assertIn("--platform linux", linux)
         self.assertIn("packaging/debian/smoke.Dockerfile", linux)
         self.assertIn("GX_SMOKE_PYTHON=/opt/gx-smoke-python/bin/python3.14", linux)
@@ -544,7 +548,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("gx_shell_validate_artifacts.py aggregate", verify)
         for target in validation.TARGETS:
             self.assertIn("name: validation-evidence-" + target, verify)
+        self.assertEqual(verify.count("name: validation-evidence-"), len(validation.TARGETS))
         self.assertLess(verify.index("gx_shell_package.py verify"), verify.index("gx_shell_validate_artifacts.py aggregate"))
+
+    def test_stage_producers_match_the_stage_reuse_contract(self):
+        self.assertEqual({key: value[0] for key, value in validation.STAGES.items()},
+                         {"ghostty-windows": package.GHOSTTY, "ghostty-linux": package.GHOSTTY,
+                          "shell-windows": "ohmyzsh", "shell-linux": "ohmyzsh"})
+        for key in validation.STAGES:
+            with self.subTest(key=key):
+                number, name = validation.stage_upload_step(self.text, key)
+                self.assertGreater(number, 2)
+                self.assertEqual(name, "Run actions/upload-artifact@v7")
+        for name in validation.SOURCE_TEST_JOBS:
+            self.assertIn("if: needs.prepare.outputs.source_run_id == ''", self.job(name))
 
 
 if __name__ == "__main__":

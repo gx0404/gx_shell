@@ -18,9 +18,11 @@ class ValidationWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(match, name)
         return match.group(1)
 
-    def test_same_deb_reaches_both_ubuntu_versions(self):
+    def test_deb_smoke_runs_on_ubuntu_24_04_only(self):
         smoke = self.job('smoke-linux')
-        self.assertIn("ubuntu: ['20.04', '24.04']", smoke)
+        self.assertIn("ubuntu: ['24.04']", smoke)
+        self.assertNotIn('20.04', self.workflow)
+        self.assertNotIn('22.04', self.workflow)
         self.assertIn('name: release-linux', smoke)
         self.assertIn('--build-arg "UBUNTU_VERSION=$GX_UBUNTU"', smoke)
         self.assertIn('--env GX_SMOKE_DIST=/workspace/dist', smoke)
@@ -50,14 +52,45 @@ class ValidationWorkflowTests(unittest.TestCase):
         self.assertIn('ENV GX_SMOKE_PYTHON=' + interpreter, self.dockerfile)
         self.assertIn('--env GX_SMOKE_PYTHON=' + interpreter, self.job('smoke-linux'))
 
-    def test_windows_runs_native_nextest_and_coordinator_tests(self):
-        windows = self.job('wezterm-windows')
+    def test_wezterm_is_gone_and_ghostty_gx_follows_its_consumer_contract(self):
+        self.assertNotRegex(self.workflow, r'(?i)wezterm|nextest|cargo ')
+        setup_zig = ('uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1\n'
+                     '        with:\n          version: ${{ needs.prepare.outputs.zig }}\n          use-cache: false')
+        windows = self.job('ghostty-windows')
         self.assertIn('runs-on: windows-2025', windows)
-        self.assertIn('tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}', windows)
-        self.assertIn('cargo nextest run --locked -p config -p mux -p wezterm-gui --no-fail-fast --test-threads 2', windows)
+        self.assertLess(windows.index('git config --global core.autocrlf false'), windows.index('uses: actions/checkout@v5'))
+        self.assertIn('["gx_ghostty"]', windows)
+        self.assertIn(setup_zig, windows)
+        build = windows.index('python scripts/gx_package.py windows --build --stage-dir $stage '
+                              '--version-string $env:GX_VERSION_STRING')
+        self.assertLess(build, windows.index('python scripts/gx_package.py verify-stage $stage'))
+        self.assertIn('GX_VERSION_STRING: ${{ needs.prepare.outputs.ghostty_version_string }}', windows)
+        linux = self.job('ghostty-linux')
+        self.assertIn('container:\n      image: ubuntu:24.04', linux)
+        self.assertLess(linux.index('apt-get install -y --no-install-recommends ca-certificates git python3'),
+                        linux.index('uses: actions/checkout@v5'))
+        self.assertIn('--component gx_ghostty', linux)
+        self.assertLess(linux.index('python3 scripts/gx_package.py deb --build --install-deps'),
+                        linux.index('python3 scripts/gx_package.py verify-stage "$RUNNER_TEMP/ghostty-stage"'))
+        self.assertNotIn('setup-python', linux)
+        tests = self.job('ghostty-tests')
+        self.assertIn(setup_zig, tests)
+        self.assertIn('python scripts/run_unittests.py test_gx_package test_gx_release', tests)
+        self.assertIn('python scripts/zig_test.py --suite main -Dapp-runtime=none', tests)
+        self.assertIn('ghostty-tests', self.job('verify'))
+        prepare = self.job('prepare')
+        self.assertIn('--component ohmyzsh --component gx_ghostty', prepare)
+        for output in ('rust', 'zig', 'ghostty_version_string', 'lock_digest'):
+            self.assertIn(f'{output}: ${{{{ steps.sources.outputs.{output} }}}}', prepare)
+        self.assertIn('build.ghostty_version_string(ghostty, dict(os.environ))', prepare)
+
+    def test_windows_installer_runs_coordinator_tests_with_pinned_inno_setup(self):
         coordinator = "python -B -m unittest discover -s scripts -p 'test_gx_shell_*.py'"
-        self.assertNotIn(coordinator, windows)
+        self.assertNotIn(coordinator, self.job('ghostty-windows'))
         package = self.job('package-windows')
+        self.assertIn('needs: [prepare, ghostty-windows, shell-windows]', package)
+        self.assertIn('--ghostty-stage "$env:RUNNER_TEMP/ghostty-stage"', package)
+        self.assertIn('--ghostty-stage "$RUNNER_TEMP/ghostty-stage"', self.job('package-linux'))
         ordered = (
             'name: Install checksum-pinned Inno Setup',
             '$installed = Start-Process -FilePath $installer',

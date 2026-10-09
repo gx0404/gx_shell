@@ -4,6 +4,8 @@ name: release
 # Only complete stages reach the installer jobs; both platforms and their tests
 # must pass before a tag/manual run can publish. Historical release installers
 # are not inputs: these smoke gates do not claim old-release upgrade coverage.
+# Ghostty GX stages come from the consumer contract of the locked gx0404/gx_ghostty
+# (scripts/gx_package.py: `windows --build`, `deb --build --install-deps`, `verify-stage`).
 on:
   push:
     tags: ['gx-shell-v*']
@@ -43,7 +45,8 @@ jobs:
       sha: ${{ steps.meta.outputs.sha }}
       version: ${{ steps.meta.outputs.version }}
       rust: ${{ steps.sources.outputs.rust }}
-      nextest: ${{ steps.sources.outputs.nextest }}
+      zig: ${{ steps.sources.outputs.zig }}
+      ghostty_version_string: ${{ steps.sources.outputs.ghostty_version_string }}
       lock_digest: ${{ steps.sources.outputs.lock_digest }}
       publish: ${{ steps.meta.outputs.publish }}
       source_run_id: ${{ steps.meta.outputs.source_run_id }}
@@ -59,8 +62,8 @@ jobs:
           set -euo pipefail
           python scripts/gx_shell_sources.py check --lock components.lock.json --require-remote > "$RUNNER_TEMP/validated-lock.json"
           python scripts/gx_shell_sources.py checkout --lock components.lock.json --output "$RUNNER_TEMP/sources" \
-            --component ohmyzsh --component wezterm > "$RUNNER_TEMP/source-checkouts.json"
-      - name: Bind lock digest, component dependency identity and toolchain
+            --component ohmyzsh --component gx_ghostty > "$RUNNER_TEMP/source-checkouts.json"
+      - name: Bind lock digest, component dependency identity and toolchains
         id: sources
         shell: python
         run: |
@@ -68,9 +71,11 @@ jobs:
           import os
           from pathlib import Path
           import re
+          import subprocess
           import sys
 
           sys.path.insert(0, "scripts")
+          import gx_shell_build as build
           import gx_shell_sources as sources
 
           root = Path(os.environ["RUNNER_TEMP"])
@@ -80,7 +85,7 @@ jobs:
           checked = json.loads((root / "source-checkouts.json").read_text(encoding="utf-8"))
           if validated["lock_digest"] != digest or checked["lock_digest"] != digest:
               raise SystemExit("Source lock changed between validation and checkout")
-          wezterm = root / "sources/wezterm"
+          ghostty = root / "sources/gx_ghostty"
           ohmyzsh = root / "sources/ohmyzsh"
           dependency = json.loads((ohmyzsh / "scripts/packaging/dependencies.json").read_text(encoding="utf-8"))["herdr"]
           herdr = lock["components"]["herdr"]
@@ -88,18 +93,21 @@ jobs:
               raise SystemExit("Oh My Zsh dependency lock differs from the coordinator herdr identity")
           if dependency["source"].get("commit") != herdr["revision"]:
               raise SystemExit("Oh My Zsh herdr source archive differs from the locked commit")
-          sys.path.insert(0, str(wezterm / "scripts"))
-          import gx_package
-
-          rust = gx_package.RUST_VERSION
-          if rust != dependency["rust"] or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rust):
-              raise SystemExit("WezTerm and herdr must pin the same Rust version")
-          nextest = re.findall(r'^NEXTEST_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$',
-                               (wezterm / "scripts/setup_env.sh").read_text(encoding="utf-8"), re.MULTILINE)
-          if len(nextest) != 1:
-              raise SystemExit("WezTerm must pin exactly one NEXTEST_VERSION")
+          rust = dependency["rust"]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rust):
+              raise SystemExit("herdr must pin an exact Rust version")
+          # The locked checkout's own release metadata: its Zig pin (scripts/setup_zig.py, checked against
+          # build.zig.zon) and the version string both platform stages must be built with.
+          code = ("import sys; sys.path.insert(0, 'scripts'); import gx_release; "
+                  "info = gx_release.release_info(gx_release.ROOT); print(info.zig_version)")
+          zig = subprocess.run([sys.executable, "-B", "-c", code], cwd=ghostty, check=True,
+                               capture_output=True, text=True).stdout.strip()
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", zig):
+              raise SystemExit("Ghostty GX must pin an exact Zig version")
+          version_string = build.ghostty_version_string(ghostty, dict(os.environ))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              for name, value in (("lock_digest", digest), ("rust", rust), ("nextest", nextest[0])):
+              for name, value in (("lock_digest", digest), ("rust", rust), ("zig", zig),
+                                  ("ghostty_version_string", version_string)):
                   print(f"{name}={value}", file=output)
       - name: Resolve coordinator version and release eligibility
         id: meta
@@ -160,7 +168,6 @@ jobs:
         run: |
           set -euo pipefail
           python -m unittest discover -s scripts -p 'test_gx_shell_*.py'
-          (cd "$RUNNER_TEMP/sources/wezterm" && python -m unittest discover -s scripts -p 'test_gx_*.py')
           (cd "$RUNNER_TEMP/sources/ohmyzsh" && python -m unittest discover -s tests -p 'test_gx_*.py')
 
   ohmyzsh-posix:
@@ -228,15 +235,11 @@ jobs:
           python tests/gx_windows.py
           python tests/gx_launcher.py
 
-  wezterm-windows:
+  ghostty-windows:
     needs: prepare
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: windows-2025
-    timeout-minutes: 240
-    env:
-      CARGO_INCREMENTAL: '0'
-      CARGO_BUILD_JOBS: '2'
-      SCCACHE_GHA_ENABLED: 'true'
+    timeout-minutes: 120
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
@@ -246,7 +249,7 @@ jobs:
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.14.7'
-      - name: Checkout locked WezTerm with recursive submodules
+      - name: Checkout locked Ghostty GX
         shell: python
         env:
           GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
@@ -256,126 +259,93 @@ jobs:
           import sys
           sys.path.insert(0, "scripts")
           import gx_shell_sources as sources
-          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["wezterm"])
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["gx_ghostty"])
           if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
               raise SystemExit("Source lock differs from prepare")
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          toolchain: ${{ needs.prepare.outputs.rust }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: v0.18.0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}
-      - name: Launcher and Windows configuration, mux and GUI tests
+          version: ${{ needs.prepare.outputs.zig }}
+          use-cache: false
+      - name: Build and stage Ghostty GX for Windows
         shell: pwsh
-        working-directory: ${{ runner.temp }}/sources/wezterm
         env:
-          RUSTC_WRAPPER: sccache
-          CARGO_PROFILE_DEV_DEBUG: line-tables-only
-          CMAKE_BUILD_PARALLEL_LEVEL: '2'
+          GX_VERSION_STRING: ${{ needs.prepare.outputs.ghostty_version_string }}
         run: |
-          $env:PATH = "C:\Strawberry\perl\bin;" + $env:PATH
-          New-Item -ItemType Directory -Force .local/gx-tests | Out-Null
-          rustc --edition=2021 --test scripts/gx-launcher/main.rs -o .local/gx-tests/launcher-tests.exe
+          Set-Location (Join-Path $env:RUNNER_TEMP 'sources/gx_ghostty')
+          $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'gx-zig-global'
+          $env:ZIG_LOCAL_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'gx-zig-local'
+          $env:GX_GHOSTTY_PACKAGE_CACHE = Join-Path $env:RUNNER_TEMP 'gx-package-cache'
+          $stage = Join-Path $env:RUNNER_TEMP 'ghostty-stage'
+          python scripts/gx_package.py windows --build --stage-dir $stage --version-string $env:GX_VERSION_STRING
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .local/gx-tests/launcher-tests.exe
+          python scripts/gx_package.py verify-stage $stage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked -p config -p mux -p wezterm-gui --no-fail-fast --test-threads 2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build and stage WezTerm for Windows
-        shell: pwsh
-        working-directory: ${{ runner.temp }}/sources/wezterm
-        env:
-          RUSTC_WRAPPER: sccache
-        run: |
-          $env:PATH = "C:\Strawberry\perl\bin;" + $env:PATH
-          python scripts/gx_package.py windows --stage-dir "$env:RUNNER_TEMP/wezterm-stage"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          tar -cf "$env:RUNNER_TEMP/stage.tar" -C "$env:RUNNER_TEMP/wezterm-stage" .
+          tar -cf "$env:RUNNER_TEMP/stage.tar" -C $stage .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         with:
-          name: stage-wezterm-windows
+          name: stage-ghostty-windows
           path: ${{ runner.temp }}/stage.tar
           if-no-files-found: error
           retention-days: 7
 
-  wezterm-linux:
+  ghostty-linux:
     needs: prepare
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    # The deb targets Ubuntu 24.04 and later, so Ghostty GX is built against the Ubuntu 24.04 GTK 4,
+    # libadwaita and glibc; scripts/gx_package.py apt-installs its build dependencies and the pinned Zig.
+    container:
+      image: ubuntu:24.04
+    defaults:
+      run:
+        shell: bash
     env:
-      CARGO_INCREMENTAL: '0'
-      CARGO_BUILD_JOBS: '2'
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      - name: Install Git and Python before the checkouts so that both are clones
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git python3
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
-        with:
-          python-version: '3.14.7'
-      - name: Checkout locked WezTerm with recursive submodules
-        shell: python
+      - name: Checkout locked Ghostty GX
         env:
           GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
         run: |
-          import os
-          from pathlib import Path
-          import sys
-          sys.path.insert(0, "scripts")
-          import gx_shell_sources as sources
-          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["wezterm"])
-          if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
-              raise SystemExit("Source lock differs from prepare")
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ needs.prepare.outputs.rust }}
-          components: rustfmt
-      - name: Restore Ubuntu 20.04 Cargo cache
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.temp }}/sources/wezterm/.local/gx-deb-cache
-          key: gx-shell-focal-v2-${{ needs.prepare.outputs.rust }}-${{ needs.prepare.outputs.lock_digest }}
-      - name: Launcher and Lua unit tests
-        working-directory: ${{ runner.temp }}/sources/wezterm
+          set -euo pipefail
+          python3 scripts/gx_shell_sources.py checkout --lock components.lock.json --output "$RUNNER_TEMP/sources" \
+            --component gx_ghostty > "$RUNNER_TEMP/source-checkouts.json"
+          python3 -c 'import json, os, sys; sys.exit(json.load(open(sys.argv[1]))["lock_digest"] != os.environ["GX_LOCK_DIGEST"])' \
+            "$RUNNER_TEMP/source-checkouts.json" || { echo "Source lock differs from prepare" >&2; exit 1; }
+      - name: Build and stage Ghostty GX on Ubuntu 24.04
+        env:
+          GX_VERSION_STRING: ${{ needs.prepare.outputs.ghostty_version_string }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y lua5.4
-          lua5.4 scripts/tests/gx_resurrect.lua
-          lua5.4 scripts/tests/gx_shells.lua
-          rustfmt --edition 2021 --check scripts/gx-launcher/main.rs
-          mkdir -p .local/gx-tests
-          rustc --edition=2021 --test scripts/gx-launcher/main.rs -o .local/gx-tests/launcher-tests
-          .local/gx-tests/launcher-tests
-      - name: Build and stage WezTerm on the Ubuntu 20.04 baseline
-        working-directory: ${{ runner.temp }}/sources/wezterm
-        run: |
-          set -euo pipefail
-          python3 scripts/gx_package.py deb --container --cache-dir .local/gx-deb-cache --stage-dir "$RUNNER_TEMP/wezterm-out/stage"
-          tar -cf "$RUNNER_TEMP/stage.tar" -C "$RUNNER_TEMP/wezterm-out/stage" .
+          cd "$RUNNER_TEMP/sources/gx_ghostty"
+          export ZIG_GLOBAL_CACHE_DIR="$RUNNER_TEMP/gx-zig-global"
+          export ZIG_LOCAL_CACHE_DIR="$RUNNER_TEMP/gx-zig-local"
+          export GX_GHOSTTY_PACKAGE_CACHE="$RUNNER_TEMP/gx-package-cache"
+          python3 scripts/gx_package.py deb --build --install-deps --stage-dir "$RUNNER_TEMP/ghostty-stage" \
+            --version-string "$GX_VERSION_STRING"
+          python3 scripts/gx_package.py verify-stage "$RUNNER_TEMP/ghostty-stage"
+          tar -cf "$RUNNER_TEMP/stage.tar" -C "$RUNNER_TEMP/ghostty-stage" .
       - uses: actions/upload-artifact@v7
         with:
-          name: stage-wezterm-linux
+          name: stage-ghostty-linux
           path: ${{ runner.temp }}/stage.tar
           if-no-files-found: error
           retention-days: 7
 
-  wezterm-tests:
+  ghostty-tests:
     needs: prepare
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    env:
-      CARGO_INCREMENTAL: '0'
-      # A debug build with line tables still reports panic locations; full debug info only slows the cold build.
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      SCCACHE_GHA_ENABLED: 'true'
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v5
         with:
@@ -384,7 +354,7 @@ jobs:
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.14.7'
-      - name: Checkout locked WezTerm with recursive submodules
+      - name: Checkout locked Ghostty GX
         shell: python
         env:
           GX_LOCK_DIGEST: ${{ needs.prepare.outputs.lock_digest }}
@@ -394,25 +364,26 @@ jobs:
           import sys
           sys.path.insert(0, "scripts")
           import gx_shell_sources as sources
-          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["wezterm"])
+          result = sources.checkout("components.lock.json", Path(os.environ["RUNNER_TEMP"]) / "sources", ["gx_ghostty"])
           if result["lock_digest"] != os.environ["GX_LOCK_DIGEST"]:
               raise SystemExit("Source lock differs from prepare")
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          toolchain: ${{ needs.prepare.outputs.rust }}
-      - uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          version: v0.18.0
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest@${{ needs.prepare.outputs.nextest }}
-      - name: WezTerm configuration, mux and GUI tests (settings panel, Close-Pane mouse state machine)
-        working-directory: ${{ runner.temp }}/sources/wezterm
+          version: ${{ needs.prepare.outputs.zig }}
+          use-cache: false
+      - name: Ghostty GX stage and release contract tests
         run: |
           set -euo pipefail
-          sudo apt-get update
-          env CI=yes ./get-deps
-          cargo nextest run --locked -p config -p mux -p wezterm-gui --no-fail-fast --test-threads 2
+          cd "$RUNNER_TEMP/sources/gx_ghostty"
+          python scripts/run_unittests.py test_gx_package test_gx_release
+      - name: Ghostty GX core tests without an app runtime (terminal, termio and PTY, config)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/sources/gx_ghostty"
+          export ZIG_GLOBAL_CACHE_DIR="$RUNNER_TEMP/gx-zig-global"
+          export ZIG_LOCAL_CACHE_DIR="$RUNNER_TEMP/gx-zig-local"
+          export GX_ZIG_TEST_TIMINGS_DIR="$RUNNER_TEMP/gx-test-timings"
+          python scripts/zig_test.py --suite main -Dapp-runtime=none
 
   shell-windows:
     needs: prepare
@@ -556,7 +527,7 @@ jobs:
           retention-days: 7
 
   package-windows:
-    needs: [prepare, wezterm-windows, shell-windows]
+    needs: [prepare, ghostty-windows, shell-windows]
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: windows-2025
     timeout-minutes: 90
@@ -571,8 +542,8 @@ jobs:
           python-version: '3.14.7'
       - uses: actions/download-artifact@v8
         with:
-          name: stage-wezterm-windows
-          path: ${{ runner.temp }}/wezterm
+          name: stage-ghostty-windows
+          path: ${{ runner.temp }}/ghostty
       - uses: actions/download-artifact@v8
         with:
           name: stage-shell-windows
@@ -610,7 +581,7 @@ jobs:
           GX_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($name in 'wezterm', 'shell') {
+          foreach ($name in 'ghostty', 'shell') {
             $stage = Join-Path $env:RUNNER_TEMP "$name-stage"
             New-Item -ItemType Directory -Force $stage | Out-Null
             tar -xf (Join-Path $env:RUNNER_TEMP "$name/stage.tar") -C $stage
@@ -618,7 +589,7 @@ jobs:
           }
           python scripts/gx_shell_package.py assemble --platform windows --version $env:GX_VERSION `
             --components-lock components.lock.json `
-            --wezterm-stage "$env:RUNNER_TEMP/wezterm-stage" --ohmyzsh-stage "$env:RUNNER_TEMP/shell-stage" `
+            --ghostty-stage "$env:RUNNER_TEMP/ghostty-stage" --ohmyzsh-stage "$env:RUNNER_TEMP/shell-stage" `
             --output "$env:RUNNER_TEMP/assembly"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/gx_shell_package.py build --assembly "$env:RUNNER_TEMP/assembly" --output dist
@@ -684,7 +655,7 @@ jobs:
           retention-days: 14
 
   package-linux:
-    needs: [prepare, wezterm-linux, shell-linux]
+    needs: [prepare, ghostty-linux, shell-linux]
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -698,8 +669,8 @@ jobs:
           python-version: '3.14.7'
       - uses: actions/download-artifact@v8
         with:
-          name: stage-wezterm-linux
-          path: ${{ runner.temp }}/wezterm
+          name: stage-ghostty-linux
+          path: ${{ runner.temp }}/ghostty
       - uses: actions/download-artifact@v8
         with:
           name: stage-shell-linux
@@ -720,13 +691,13 @@ jobs:
           GX_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          for name in wezterm shell; do
+          for name in ghostty shell; do
             mkdir -p "$RUNNER_TEMP/$name-stage"
             tar -xf "$RUNNER_TEMP/$name/stage.tar" -C "$RUNNER_TEMP/$name-stage"
           done
           python3 scripts/gx_shell_package.py assemble --platform linux --version "$GX_VERSION" \
             --components-lock components.lock.json \
-            --wezterm-stage "$RUNNER_TEMP/wezterm-stage" --ohmyzsh-stage "$RUNNER_TEMP/shell-stage" \
+            --ghostty-stage "$RUNNER_TEMP/ghostty-stage" --ohmyzsh-stage "$RUNNER_TEMP/shell-stage" \
             --output "$RUNNER_TEMP/assembly"
           python3 scripts/gx_shell_package.py build --assembly "$RUNNER_TEMP/assembly" --output dist
       - uses: actions/upload-artifact@v7
@@ -745,7 +716,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ubuntu: ['20.04', '24.04']
+        ubuntu: ['24.04']
     steps:
       - uses: actions/checkout@v5
         with:
@@ -798,7 +769,7 @@ jobs:
           retention-days: 14
 
   verify:
-    needs: [prepare, ohmyzsh-posix, wezterm-tests, package-windows, package-linux, smoke-linux]
+    needs: [prepare, ohmyzsh-posix, ghostty-tests, package-windows, package-linux, smoke-linux]
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -872,7 +843,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ubuntu: ['20.04', '24.04']
+        ubuntu: ['24.04']
     env:
       EXPECTED_INPUTS_DIGEST: ${{ needs.validate-artifacts.outputs.inputs_digest }}
       GX_UBUNTU: ${{ matrix.ubuntu }}
@@ -1062,7 +1033,7 @@ jobs:
           }
           (Path(os.environ['RUNNER_TEMP']) / 'job-outcomes.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
           if not ready:
-              raise SystemExit('Source preflight and all three complete smoke jobs must succeed; no validation PASS is issued.')
+              raise SystemExit('Source preflight and both complete smoke jobs must succeed; no validation PASS is issued.')
       - name: Download and verify both original platform packages
         id: download
         env:
@@ -1074,17 +1045,13 @@ jobs:
             --components-lock components.lock.json --output "$RUNNER_TEMP/validation-inputs"
       - uses: actions/download-artifact@v8
         with:
-          name: validation-evidence-ubuntu-20.04
-          path: ${{ runner.temp }}/receipts/ubuntu-20.04
-      - uses: actions/download-artifact@v8
-        with:
           name: validation-evidence-ubuntu-24.04
           path: ${{ runner.temp }}/receipts/ubuntu-24.04
       - uses: actions/download-artifact@v8
         with:
           name: validation-evidence-windows
           path: ${{ runner.temp }}/receipts/windows
-      - name: Verify original provenance and all three current smoke receipts
+      - name: Verify original provenance and both current smoke receipts
         env:
           PACKAGE_VERSION: ${{ steps.download.outputs.version }}
         run: |

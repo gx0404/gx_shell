@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 COMPONENT_BRANCHES = {
     "herdr": "feature/gx_herdr",
     "ohmyzsh": "feature/gx_ohmyzsh",
-    "wezterm": "feature/gx_wezterm",
+    "gx_ghostty": "gx_ghostty",
 }
 COMPONENTS = tuple(COMPONENT_BRANCHES)
 REVISION = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -60,7 +60,7 @@ def _read_lock(path: Path) -> tuple[bytes, dict]:
     require(type(lock.get("schema")) is int and lock["schema"] == 1, "lock schema must be 1")
     entries = lock.get("components")
     require(isinstance(entries, dict) and set(entries) == set(COMPONENTS),
-            "lock must contain exactly herdr, ohmyzsh and wezterm")
+            "lock must contain exactly herdr, ohmyzsh and gx_ghostty")
     for name in COMPONENTS:
         entry = entries[name]
         require(isinstance(entry, dict) and set(entry) == {"repository", "branch", "revision"},
@@ -248,13 +248,12 @@ def _submodules(owner: Path, path: Path, *, offline: bool, materialize: bool) ->
         _submodules(owner, child, offline=offline, materialize=materialize)
 
 
-def _existing(path: Path, name: str, entry: dict, *, offline: bool) -> None:
+def _existing(path: Path, entry: dict, *, offline: bool) -> None:
     require(path.is_dir(), "existing component path is not a directory")
     _repository(path)
     _origin(path, entry)
     _clean_head(path, entry["revision"])
-    if name == "wezterm":
-        _submodules(path, path, offline=offline, materialize=False)
+    _submodules(path, path, offline=offline, materialize=False)
 
 
 def _init(path: Path, entry: dict) -> None:
@@ -327,7 +326,7 @@ def checkout(path: str | Path, output: str | Path, components: list[str] | None 
     for name in names:
         target = _safe_path(root / name, root)
         if target.exists():
-            _existing(target, name, lock["components"][name], offline=offline)
+            _existing(target, lock["components"][name], offline=offline)
         else:
             require(not offline, f"{name}: offline checkout requires an existing pinned clone")
     root.mkdir(parents=True, exist_ok=True)
@@ -345,15 +344,14 @@ def checkout(path: str | Path, output: str | Path, components: list[str] | None 
                      _url(entry), entry["revision"])
                 _require_commit(staging, entry["revision"])
                 _git(staging, "checkout", "--quiet", "--detach", entry["revision"], "--")
-                if name == "wezterm":
-                    _submodules(staging, staging, offline=False, materialize=True)
-                _existing(staging, name, entry, offline=True)
+                _submodules(staging, staging, offline=False, materialize=True)
+                _existing(staging, entry, offline=True)
                 _safe_path(target, root)
                 require(not target.exists(), "component destination appeared during checkout")
                 staging.rename(target)
-        elif name == "wezterm" and not offline:
+        elif not offline:
             _submodules(target, target, offline=False, materialize=True)
-        _existing(target, name, entry, offline=True)
+        _existing(target, entry, offline=True)
         result[name] = {**entry, "path": str(target)}
     return {"lock_digest": hashlib.sha256(raw).hexdigest(), "components": result}
 

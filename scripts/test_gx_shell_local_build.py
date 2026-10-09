@@ -267,7 +267,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
             with self.subTest(host=name):
                 body = ("& " + quote(SCRIPT) + " -Format Json -BuildRoot " + quote(run)
                         + " -RepoRoot " + quote(repo)
-                        + " -Component herdr -ComponentRevisions @{herdr=('a'*40); ohmyzsh=('b'*40); wezterm=('c'*40)}")
+                        + " -Component herdr -ComponentRevisions @{herdr=('a'*40); ohmyzsh=('b'*40); gx_ghostty=('c'*40)}")
                 data = self.decoded(run_ps(exe, body, {"GH_TOKEN": SENTINEL, "GX_PRIVATE_PASSWORD": SENTINEL,
                                                      "GX_CPU_JOBS": "1", "GX_ZSH_JOBS": "1", "GX_MEMORY_BUDGET_GB": "6"}))
                 self.assertEqual(data["mode"], "plan-only")
@@ -285,7 +285,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 self.assertEqual(paths["build_root"], data["environment"]["GX_BUILD_ROOT"])
                 self.assertEqual(paths["build_root"], data["environment"]["GX_LOCAL_BUILD_ROOT"])
                 leaves = []
-                for component, sha in zip(("herdr", "ohmyzsh", "wezterm"), ("a"*40, "b"*40, "c"*40)):
+                for component, sha in zip(("herdr", "ohmyzsh", "gx_ghostty"), ("a"*40, "b"*40, "c"*40)):
                     entry = paths["components"][component]
                     self.assertEqual(entry["revision"], sha)
                     self.assertEqual(canonical(entry["root"]), canonical(repo / ".local" / "sources" / component))
@@ -307,7 +307,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
                 reports.append(data)
         if len(reports) > 1:
             self.assertEqual(reports[0]["paths"]["toolchain_key"], reports[1]["paths"]["toolchain_key"])
-            for component in ("herdr", "ohmyzsh", "wezterm"):
+            for component in ("herdr", "ohmyzsh", "gx_ghostty"):
                 self.assertEqual(reports[0]["paths"]["components"][component]["paths"],
                                  reports[1]["paths"]["components"][component]["paths"])
 
@@ -334,7 +334,7 @@ $script:top=Split-Path -Parent $env:SystemRoot; $parent=Get-Component 'herdr' $e
         run = repo / ".local" / "build" / "run-src"
         cases = [
             "@{herdr=" + quote(repo / "elsewhere" / "herdr") + "}",
-            "@{wezterm=" + quote(run / "wezterm") + "}",
+            "@{gx_ghostty=" + quote(run / "gx_ghostty") + "}",
             "@{ohmyzsh=" + quote(repo / ".local" / "sources") + "}",
         ]
         for name, exe in HOSTS:

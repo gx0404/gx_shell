@@ -24,7 +24,7 @@ if os.name == 'nt':
     BASH = str(git_bash) if git_bash.is_file() else None
 else:
     BASH = shutil.which('bash')
-PROTECTED = ('.config/wezterm/wezterm.lua', '.config/wezterm/gui-settings.json',
+PROTECTED = ('.config/ghostty/config.ghostty', '.config/wezterm/wezterm.lua',
              '.config/ohmyzsh-gx/profile/.zshrc', '.local/share/gx-smoke/preserve.txt',
              '.local/state/gx-smoke/preserve.txt')
 
@@ -92,10 +92,13 @@ class SmokeContracts(unittest.TestCase):
                          'installed herdr hash differs', 'run_user herdr update', '#compdef herdr',
                          'run_user "$GX_SMOKE_PYTHON" -I -B - "$herdr_probe" "$evidence/herdr-probe"',
                          "'--zsh', '/usr/lib/ohmyzsh-gx/libexec/zsh/zsh'",
-                         'run_user wezterm-gx --gx-initialize-only', 'run_user wezterm-gx ls-fonts',
-                         'PURE_FN_TEST: ALL PASS', 'xvfb-run', 'LIBGL_ALWAYS_SOFTWARE=1',
-                         'pgrep -P "$gui"', 'kill -0 "$gui"', 'linux.png'):
+                         'run_user ghostty-gx +version', "'  - version: ' + ghostty['product_version']",
+                         "ghostty['binaries']['ghostty']", "run_user ghostty-gx +list-fonts '--family=JetBrainsMono Nerd Font'",
+                         'xvfb-run', 'GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1',
+                         'ghostty-gx -e gx-zsh', 'pgrep -P "$gui"', 'test "$(readlink "/proc/$gui/exe")" = /usr/lib/ghostty-gx/bin/ghostty',
+                         'kill -0 "$gui"', 'scrot "$1/linux.png"', 'loaded OpenGL', "assert_user_configs 'Ghostty GX'"):
             self.assertIn(contract, body)
+        self.assertNotIn('wezterm-gx', TEXT)
         calls = re.findall(r'^assert_runtime (.+)$', TEXT, re.M)
         self.assertEqual(calls, ['"$evidence" "$evidence/smoke-provenance.json"',
                                  '"$evidence/reinstall-runtime" "$evidence/smoke-provenance.json"'])
@@ -118,15 +121,30 @@ class SmokeContracts(unittest.TestCase):
 
     def test_entry_points_retain_package_and_root_ownership_checks(self):
         body = re.search(r'^assert_entry_points\(\) \{\n.*?^\}', TEXT, re.M | re.S).group(0)
-        for contract in ('gx-zsh herdr wezterm-gx wezterm-gx-gui', 'dpkg-query -S',
+        for contract in ('gx-zsh herdr ghostty-gx', 'target=/usr/lib/ghostty-gx/bin/ghostty', 'dpkg-query -S',
                          'readlink -f', "stat -c '%u:%g'", '= 0:0'):
             self.assertIn(contract, body)
+
+    def test_user_configuration_is_seeded_before_install_and_checked_after_it(self):
+        seed = TEXT.index('printf "font-size = 13\\n" > "$XDG_CONFIG_HOME/ghostty/config.ghostty"')
+        self.assertLess(seed, TEXT.index('"$evidence/user-configs.sha256"'))
+        self.assertLess(TEXT.index('"$evidence/user-configs.sha256"'), TEXT.index('step install'))
+        self.assertLess(TEXT.index('apt-get install -y "$package"'), TEXT.index('assert_user_configs install'))
+        self.assertIn('sha256sum --quiet -c "$evidence_root/user-configs.sha256"', TEXT)
+
+    def test_purge_removes_the_ghostty_gx_tree_desktop_entry_and_icons(self):
+        purge = TEXT[TEXT.index('step purge removes'):TEXT.index('step "maintainer scripts')]
+        for path in ('/usr/bin/ghostty-gx', '/usr/lib/ghostty-gx', '/usr/share/doc/ghostty-gx',
+                     '/usr/share/applications/com.gx0404.ghostty-gx.desktop', "-name 'com.gx0404.ghostty-gx.*'"):
+            self.assertIn(path, purge)
 
     def test_no_old_release_or_hardware_gpu_success_is_implied(self):
         final = block('$evidence/smoke-provenance.json')
         self.assertIn("'previous_gx_shell': 'NOT_RUN'", final)
         self.assertIn("'hardware_gpu': 'NOT_RUN'", final)
-        self.assertIn("'PASS_EXPLICIT_INPUT_ONLY' if sys.argv[2] else 'NOT_RUN'", final)
+        self.assertIn("'desktop_input_echo_redraw': 'NOT_RUN'", final)
+        self.assertIn("receipt['legacy_release_upgrade'] = 'NOT_RUN'", final)
+        self.assertNotIn('GX_SMOKE_LEGACY_DEB', TEXT)
         self.assertNotRegex(TEXT, r'(?m)^\s*(?:curl|wget|gh release)\s')
 
 
@@ -242,13 +260,15 @@ class IsolatedPythonHelpers(unittest.TestCase):
         user = {'executable': sys.executable, 'version': sys.version.split()[0], 'uid': 1001}
         (self.root / 'python-user-runtime.json').write_text(json.dumps(user), encoding='utf-8')
         receipt_path = self.root / 'smoke-provenance.json'
-        result = self.run_block('$evidence/smoke-provenance.json', receipt_path, '')
+        result = self.run_block('$evidence/smoke-provenance.json', receipt_path)
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
         self.assertEqual(receipt['legacy_release_upgrade'], 'NOT_RUN')
         self.assertEqual(receipt['coverage']['previous_gx_shell'], 'NOT_RUN')
         self.assertEqual(receipt['coverage']['hardware_gpu'], 'NOT_RUN')
         self.assertEqual(receipt['coverage']['reinstall_runtime'], 'PASS')
+        self.assertEqual(receipt['coverage']['ghostty_gx_runs_gx_zsh'], 'PASS')
+        self.assertIs(receipt['coverage']['images_reviewed'], False)
         self.assertEqual(receipt['python_user_runtime'], user)
 
 

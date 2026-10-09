@@ -68,7 +68,7 @@ class LockTests(unittest.TestCase):
         lock["components"]["unexpected"] = copy.deepcopy(lock["components"]["herdr"])
         cases.append(lock)
         for field, values in {
-            "repository": ["another/herdr", "https://github.com/gx0404/herdr.git", "gx0404/wezterm", None],
+            "repository": ["another/herdr", "https://github.com/gx0404/herdr.git", "gx0404/gx_ghostty", None],
             "branch": ["gx", "main", "feature/gx_ohmyzsh", "refs/heads/feature/gx_herdr", None],
             "revision": ["gx", "main", "1" * 39, "1" * 41, "z" * 40, "1" * 40 + "\n", 1, None],
         }.items():
@@ -101,6 +101,14 @@ class LockTests(unittest.TestCase):
                 self.write(lock)
                 with self.assertRaises(sources.SourceError):
                     sources.load_lock(self.path)
+
+    def test_replaced_wezterm_component_is_rejected(self):
+        lock = example_lock()
+        lock["components"]["wezterm"] = lock["components"].pop("gx_ghostty")
+        lock["components"]["wezterm"].update(repository="gx0404/wezterm", branch="feature/gx_wezterm")
+        self.write(lock)
+        with self.assertRaisesRegex(sources.SourceError, "herdr, ohmyzsh and gx_ghostty"):
+            sources.load_lock(self.path)
 
     def test_invalid_json_duplicate_keys_and_constants_are_rejected_without_echo(self):
         for raw in (b"{broken", b"\xff", b'{"schema":1,"schema":1}',
@@ -174,7 +182,7 @@ class GitSourceTests(unittest.TestCase):
             if name == "vendor":
                 cls.git_at(repo, "submodule", "add", "--quiet",
                            "https://github.com/gx0404/leaf.git", "nested/leaf")
-            if name == "wezterm":
+            if name == "gx_ghostty":
                 cls.git_at(repo, "submodule", "add", "--quiet",
                            "https://github.com/gx0404/vendor.git", "deps/vendor module")
             cls.git_at(repo, "add", ".")
@@ -276,7 +284,7 @@ class GitSourceTests(unittest.TestCase):
             self.assertEqual(self.git_at(repo, "config", "--local", "--get", "remote.origin.url"),
                              f"https://github.com/gx0404/{name}.git")
             self.assertFalse((repo / "latest.txt").exists())
-        vendor = output / "wezterm/deps/vendor module"
+        vendor = output / "gx_ghostty/deps/vendor module"
         leaf = vendor / "nested/leaf"
         self.assertEqual(self.git_at(vendor, "rev-parse", "HEAD"), self.revisions["vendor"])
         self.assertEqual(self.git_at(leaf, "rev-parse", "HEAD"), self.revisions["leaf"])
@@ -308,7 +316,7 @@ class GitSourceTests(unittest.TestCase):
 
         result = self.cli("checkout", "--output", self.output)
         repos = [(self.output / name, self.revisions[name]) for name in sources.COMPONENTS]
-        vendor = self.output / "wezterm/deps/vendor module"
+        vendor = self.output / "gx_ghostty/deps/vendor module"
         repos.extend(((vendor, self.revisions["vendor"]), (vendor / "nested/leaf", self.revisions["leaf"])))
         for repo, revision in repos:
             with self.subTest(repo=repo.name):
@@ -345,7 +353,7 @@ class GitSourceTests(unittest.TestCase):
         result = self.cli("checkout", "--output", self.output, "--component", "herdr",
                           "--component", "ohmyzsh", "--component", "herdr")
         self.assertEqual(set(result["components"]), {"herdr", "ohmyzsh"})
-        self.assertFalse((self.output / "wezterm").exists())
+        self.assertFalse((self.output / "gx_ghostty").exists())
         self.assertEqual(self.cli("checkout", "--output", self.output, "--component", "herdr",
                                   "--component", "ohmyzsh", "--offline"), result)
 
@@ -485,27 +493,27 @@ class GitSourceTests(unittest.TestCase):
         self.assertEqual(target.read_text(), "user file")
 
     def test_missing_nested_submodule_is_offline_error_and_online_initializes_it(self):
-        repo = self.clone("wezterm")
+        repo = self.clone("gx_ghostty")
         vendor = repo / "deps/vendor module"
         self.git_at(vendor, "submodule", "deinit", "--force", "--all")
-        self.cli("checkout", "--output", self.output, "--component", "wezterm", "--offline", ok=False)
-        self.cli("checkout", "--output", self.output, "--component", "wezterm")
+        self.cli("checkout", "--output", self.output, "--component", "gx_ghostty", "--offline", ok=False)
+        self.cli("checkout", "--output", self.output, "--component", "gx_ghostty")
         self.assertEqual(self.git_at(vendor / "nested/leaf", "rev-parse", "HEAD"), self.revisions["leaf"])
 
     def test_dirty_recursive_submodule_is_preserved(self):
-        repo = self.clone("wezterm")
+        repo = self.clone("gx_ghostty")
         changed = repo / "deps/vendor module/nested/leaf/tracked.txt"
         changed.write_text("nested user edit\n", encoding="utf-8")
-        self.cli("checkout", "--output", self.output, "--component", "wezterm", ok=False)
+        self.cli("checkout", "--output", self.output, "--component", "gx_ghostty", ok=False)
         self.assertEqual(changed.read_text(), "nested user edit\n")
 
     def test_submodule_gitfile_cannot_point_to_external_repository(self):
-        repo = self.clone("wezterm")
+        repo = self.clone("gx_ghostty")
         outside, sha = self.coordinator()
         marker = repo / "deps/vendor module/.git"
         marker.unlink()
         marker.write_text(f"gitdir: {outside / '.git'}\n", encoding="utf-8")
-        self.cli("checkout", "--output", self.output, "--component", "wezterm", ok=False)
+        self.cli("checkout", "--output", self.output, "--component", "gx_ghostty", ok=False)
         self.assertEqual(self.git_at(outside, "rev-parse", "HEAD"), sha)
 
     def test_remote_check_accepts_ancestors_and_never_changes_lock(self):

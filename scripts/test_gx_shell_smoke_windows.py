@@ -15,7 +15,7 @@ import zlib
 
 import gx_shell_package as package
 import gx_shell_sources as sources
-from test_gx_shell_package import SHA, ohmyzsh_stage, wezterm_stage, write, write_lock
+from test_gx_shell_package import SHA, ghostty_stage, ohmyzsh_stage, write, write_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 GPU = ROOT / 'scripts/gx_shell_smoke_gpu_windows.ps1'
@@ -49,7 +49,7 @@ class GpuInputTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.lock = write_lock(self.root / 'source')
         self.assembly = self.root / 'assembly'
-        self.info = package.assemble('windows', wezterm_stage(self.root, 'windows'),
+        self.info = package.assemble('windows', ghostty_stage(self.root, 'windows'),
                                      ohmyzsh_stage(self.root, 'windows'), self.assembly,
                                      version='0.1.0', sha=SHA, dirty=False, epoch=1700000000,
                                      components_lock=self.lock)
@@ -153,9 +153,9 @@ class GpuInputTests(unittest.TestCase):
 
     def test_old_gx_branch_lock_is_rejected(self):
         lock = json.loads(self.lock.read_text())
-        lock['components']['wezterm']['branch'] = 'gx'
+        lock['components']['gx_ghostty']['branch'] = 'gx'
         package.write_json(self.lock, lock)
-        with self.assertRaisesRegex(ValueError, 'feature/gx_wezterm'):
+        with self.assertRaisesRegex(ValueError, 'branch must be gx_ghostty'):
             self.verify()
 
     def test_sidecar_and_corresponding_source_are_required(self):
@@ -172,8 +172,11 @@ class GpuInputTests(unittest.TestCase):
     def test_run_writes_explicit_blocked_receipt_without_launching(self):
         self.assertEqual(HELPER.main(self.arguments('Run')), 3)
         receipt = package.read_json(self.root / 'evidence/gpu-smoke.json')
-        self.assertEqual(receipt['status'], 'BLOCKED_UNSAFE_KNOWNFOLDERS')
+        self.assertEqual(receipt['status'], 'BLOCKED_PENDING_ISOLATION_AUDIT')
         self.assertEqual(receipt['gpu_acceptance'], 'NOT_RUN')
+        self.assertEqual(receipt['isolation_audit']['locked_ghostty_revision'],
+                         json.loads(self.lock.read_text())['components']['gx_ghostty']['revision'])
+        self.assertIn('UNREVIEWED', receipt['isolation_audit']['other_revisions'])
         self.assertFalse((self.root / 'evidence/profile').exists())
 
     def test_evidence_refuses_existing_or_input_directory(self):
@@ -186,7 +189,7 @@ class GpuInputTests(unittest.TestCase):
     def test_assembly_parent_junction_is_rejected(self):
         junction = self.root / 'assembly-alias'
         result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(junction), str(self.assembly)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, errors='replace', timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         try:
             with self.assertRaisesRegex(ValueError, 'reparse point'):
@@ -203,27 +206,38 @@ class GpuInputTests(unittest.TestCase):
                        '-ComponentsLock', str(self.lock), '-Assembly', str(self.assembly),
                        '-ExpectedCoordinator', SHA, '-ExpectedLockDigest', package.digest(self.lock),
                        '-ExpectedManifestSha256', self.digest, '-Evidence', str(evidence), '-Python', sys.executable]
-            result = subprocess.run(command, text=True, capture_output=True, timeout=60)
+            result = subprocess.run(command, text=True, errors='replace', capture_output=True, timeout=60)
             self.assertEqual(result.returncode == 0, action == 'VerifyInputs', result.stdout + result.stderr)
             self.assertEqual(package.read_json(evidence / 'gpu-smoke.json')['gpu_acceptance'], 'NOT_RUN')
 
 
+def wgl_line(version='4.6', vendor='NVIDIA Corporation', renderer='NVIDIA GeForce RTX 4060/PCIe/SSE2', software='false'):
+    return f'info(wgl): loaded OpenGL {version} vendor={vendor} renderer={renderer} software={software}'
+
+
 class GpuEvidenceTests(unittest.TestCase):
     def test_hardware_renderer_log_formats(self):
-        self.assertTrue(HELPER.renderer_evidence('OpenGL initialized! OpenGL: Intel(R) Iris(R) Xe Graphics 4.6 wezterm version: x', 'OpenGL'))
-        text = ('Using adapter: AdapterInfo { name: "NVIDIA GeForce RTX 4060", device_type: DiscreteGpu, backend: Dx12 }\n'
-                'OpenGL initialized! WebGPU: NVIDIA GeForce RTX 4060 wezterm version: x')
-        self.assertTrue(HELPER.renderer_evidence(text, 'WebGpu'))
+        for line in (wgl_line(), wgl_line(vendor='Intel', renderer='Intel(R) Iris(R) Xe Graphics'),
+                     wgl_line('4.3', 'ATI Technologies Inc.', 'AMD Radeon(TM) Graphics')):
+            with self.subTest(line=line):
+                text = 'info(opengl): loaded OpenGL 4.6\n' + line + '\n'
+                self.assertEqual(HELPER.renderer_evidence(text, 'OpenGL'), [line])
 
-    def test_software_unknown_and_adapter_enumeration_do_not_pass(self):
-        for renderer in ('llvmpipe', 'GDI Generic', 'Microsoft Basic Render Driver', 'WARP', 'unknown'):
-            with self.subTest(renderer=renderer), self.assertRaises(ValueError):
-                HELPER.renderer_evidence('OpenGL initialized! OpenGL: ' + renderer, 'OpenGL')
-        for text in ('available adapters: NVIDIA',
-                     'Using adapter: AdapterInfo { name: "CPU", device_type: Cpu, backend: Dx12 }',
-                     'Using adapter: AdapterInfo { name: "NVIDIA", device_type: DiscreteGpu, backend: Dx12 }'):
-            with self.subTest(text=text), self.assertRaises(ValueError):
-                HELPER.renderer_evidence(text, 'WebGpu')
+    def test_software_old_unknown_and_missing_renderers_do_not_pass(self):
+        for line in (wgl_line(vendor='Mesa', renderer='llvmpipe (LLVM 19.1.7, 256 bits)', software='true'),
+                     wgl_line(vendor='Microsoft', renderer='D3D12 (NVIDIA GeForce RTX 4060)', software='true'),
+                     wgl_line('1.1', 'Microsoft Corporation', 'GDI Generic'),
+                     wgl_line(vendor='Microsoft', renderer='Microsoft Basic Render Driver'),
+                     wgl_line(vendor='Microsoft', renderer='WARP'),
+                     wgl_line('4.1'), wgl_line(vendor='Unknown', renderer='unknown'),
+                     'info(opengl): loaded OpenGL 4.6', 'GHOSTTY_GX_OPENGL=software'):
+            with self.subTest(line=line), self.assertRaises(ValueError):
+                HELPER.renderer_evidence(line, 'OpenGL')
+        with self.assertRaises(ValueError):
+            HELPER.renderer_evidence(wgl_line() + '\nwarning(opengl): OpenGL version is too old. Ghostty requires OpenGL 4.3',
+                                     'OpenGL')
+        with self.assertRaises(ValueError):
+            HELPER.renderer_evidence(wgl_line(), 'WebGpu')
 
     def test_evidence_ready_is_not_desktop_or_gpu_acceptance(self):
         with tempfile.TemporaryDirectory(prefix='gx-evidence-fixture-') as directory:
@@ -231,8 +245,8 @@ class GpuEvidenceTests(unittest.TestCase):
             receipt = {key: 'a' * 64 for key in ('package_sha256', 'package_manifest_sha256',
                        'assembly_manifest_sha256', 'components_lock_digest')}
             token = 'b' * 32
-            observation = dict(receipt, renderer='OpenGL', default_front_end=True, token=token)
-            (root / 'renderer.log').write_text('OpenGL initialized! OpenGL: NVIDIA GeForce RTX 4060 4.6')
+            observation = dict(receipt, renderer='OpenGL', ghostty_gx_opengl_override=False, token=token)
+            (root / 'renderer.log').write_text(wgl_line())
             (root / 'input.txt').write_text('GX_GPU_INPUT_' + token)
             (root / 'echo.txt').write_text('GX_GPU_ECHO_' + token + '\nGX_GPU_REDRAW_' + token + '\n')
             png(root / 'before.png', 0)
@@ -244,6 +258,10 @@ class GpuEvidenceTests(unittest.TestCase):
             self.assertEqual(result['gpu_acceptance'], 'PENDING')
             self.assertFalse(result['images_reviewed'])
             self.assertFalse(result['desktop_interaction_verified'])
+            package.write_json(root / 'observation.json', dict(observation, ghostty_gx_opengl_override=True))
+            with self.assertRaisesRegex(ValueError, 'packaged default'):
+                HELPER.check_evidence(package, root, receipt, 'OpenGL')
+            package.write_json(root / 'observation.json', observation)
             (root / 'after.png').unlink()
             with self.assertRaisesRegex(ValueError, 'regular input'):
                 HELPER.check_evidence(package, root, receipt, 'OpenGL')
@@ -268,7 +286,7 @@ class WindowsSafetyTests(unittest.TestCase):
             command = ("$tokens=$null; $errors=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('"
                        + str(path).replace("'", "''") + "',[ref]$tokens,[ref]$errors); if($errors.Count){$errors | Out-String; exit 1}")
             result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', command],
-                                    text=True, capture_output=True, timeout=30)
+                                    text=True, errors='replace', capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(PWSH, 'PowerShell 7 not installed')
@@ -280,7 +298,7 @@ class WindowsSafetyTests(unittest.TestCase):
             env.pop('RUNNER_ENVIRONMENT', None)
             result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-File', str(LIFECYCLE),
                                      '-Installer', str(Path(directory) / 'not-an-installer.exe'), '-Evidence', str(evidence)],
-                                    env=env, text=True, capture_output=True, timeout=30)
+                                    env=env, text=True, errors='replace', capture_output=True, timeout=30)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('Refusing to install on this machine', result.stdout + result.stderr)
             self.assertFalse(evidence.exists())
@@ -295,19 +313,32 @@ $names=@('Assert','Assert-MapSame','Config-Files','UserData-State')
 foreach($f in $ast.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst]},$true)){
     if($f.Name -in $names){ . ([scriptblock]::Create($f.Extent.Text)) }
 }
-$config=Join-Path $env:GX_SMOKE_TEST_ROOT 'config'
 $profile=Join-Path $env:GX_SMOKE_TEST_ROOT 'profile'
-New-Item -ItemType Directory $config,$profile | Out-Null
-Set-Content (Join-Path $config 'gui-settings.json') '{"font_size":12}'
+$ghosttyConfig=Join-Path $env:GX_SMOKE_TEST_ROOT 'ghostty'
+$weztermConfig=Join-Path $env:GX_SMOKE_TEST_ROOT 'wezterm'
+New-Item -ItemType Directory $profile,(Join-Path $ghosttyConfig 'logs'),$weztermConfig | Out-Null
 Set-Content (Join-Path $profile '.zshrc.local') 'user-layer'
+Set-Content (Join-Path $ghosttyConfig 'config.ghostty') 'font-size = 13'
+Set-Content (Join-Path $weztermConfig 'wezterm.lua') '-- earlier WezTerm GX'
 $before=UserData-State
+if($before.Count -ne 3){ throw "expected three user-data files, found $($before.Count)" }
 Assert-MapSame $before (UserData-State) 'same'
-Set-Content (Join-Path $profile '.zshrc.local') 'corrupted'
-$caught=$false; try { Assert-MapSame $before (UserData-State) 'changed' } catch { $caught=$true }
-if(-not $caught){ throw 'changed profile accepted' }
-Remove-Item -Force (Join-Path $profile '.zshrc.local')
-$caught=$false; try { Assert-MapSame $before (UserData-State) 'missing' } catch { $caught=$true }
-if(-not $caught){ throw 'missing profile accepted' }
+Set-Content (Join-Path $ghosttyConfig 'logs\ghostty.log') 'a log Ghostty GX writes on every start'
+Assert-MapSame $before (UserData-State) 'logs'
+foreach($path in (Join-Path $profile '.zshrc.local'),(Join-Path $ghosttyConfig 'config.ghostty'),(Join-Path $weztermConfig 'wezterm.lua')){
+    $original=[IO.File]::ReadAllBytes($path)
+    Set-Content $path 'corrupted'
+    $caught=$false; try { Assert-MapSame $before (UserData-State) 'changed' } catch { $caught=$true }
+    if(-not $caught){ throw "changed user data accepted: $path" }
+    Remove-Item -Force $path
+    $caught=$false; try { Assert-MapSame $before (UserData-State) 'missing' } catch { $caught=$true }
+    if(-not $caught){ throw "missing user data accepted: $path" }
+    [IO.File]::WriteAllBytes($path,$original)
+}
+Assert-MapSame $before (UserData-State) 'restored'
+Set-Content (Join-Path $ghosttyConfig 'extra.ghostty') 'theme = dark'
+$caught=$false; try { Assert-MapSame $before (UserData-State) 'added' } catch { $caught=$true }
+if(-not $caught){ throw 'an added Ghostty GX configuration file was accepted' }
 $baseline=@{'user-path-entries'='["%USERPROFILE%/tools"]'; 'font:third-party'='original font'; 'shortcut:third-party'='original hash'}
 foreach($name in $baseline.Keys){
     $changed=$baseline.Clone(); $changed[$name]='changed'
@@ -321,7 +352,7 @@ foreach($name in $baseline.Keys){
         with tempfile.TemporaryDirectory(prefix='gx-profile-fixture-') as directory:
             result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', script],
                                     env=dict(os.environ, GX_SMOKE_TEST_SCRIPT=str(LIFECYCLE), GX_SMOKE_TEST_ROOT=directory),
-                                    text=True, capture_output=True, timeout=30)
+                                    text=True, errors='replace', capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_gpu_entry_has_no_payload_or_desktop_execution_backend(self):
@@ -340,8 +371,9 @@ foreach($name in $baseline.Keys){
             self.assertIn('Assert-UserData', text[setup:runtime])
         self.assertIn('Assert-UserData $userBefore $Label', text)
         self.assertIn('Assert-NonOwnedState $Label', text)
-        self.assertIn('Run-HostedGuiWindow $Label', text)
-        self.assertIn("Run-HostedGuiWindow 'install'", text)
+        self.assertIn("Run-HostedGuiWindow $Label 'GX Zsh.lnk'", text)
+        self.assertIn("Run-HostedGuiWindow 'install' 'Ghostty GX.lnk'", text)
+        self.assertIn("GHOSTTY_GX_OPENGL = 'software'", text)
         self.assertIn("desktop_input_echo_redraw = 'NOT_RUN'", text)
         self.assertIn('images_reviewed = $false', text)
         self.assertNotIn('Write-Host "Screenshot unavailable', text)
@@ -398,7 +430,7 @@ $Evidence=$env:GX_TREE_OUTPUT
                               env=dict(os.environ, GX_TREE_SCRIPT=str(LIFECYCLE), GX_TREE_OUTPUT=str(self.root),
                                        GX_TREE_EXE=sys.executable,
                                        GX_TREE_ARGUMENTS=subprocess.list2cmdline([str(self.fixture), mode, str(self.root)])),
-                              capture_output=True, text=True, timeout=35)
+                              capture_output=True, text=True, errors='replace', timeout=35)
 
     def test_waits_for_child_after_bootstrap_exits(self):
         result = self.run_powershell("$r=Invoke-OwnedProcessTree $env:GX_TREE_EXE $env:GX_TREE_ARGUMENTS 'child-wait' 8; if($r.ExitCode -ne 0){throw 'unexpected exit'}")
@@ -496,7 +528,8 @@ class InstallerSilentRefusalTests(unittest.TestCase):
             (root / 'fixture.ico').write_bytes(icon)
             result = subprocess.run([compiler, '/Q', '/DGxVersion=0.0.0', f'/DGxPayload={payload}',
                                      f'/DGxOutput={root / "output"}', '/DGxFilename=compile-only-never-install',
-                                     f'/DGxIcon={root / "fixture.ico"}', str(ROOT / 'packaging/windows/gx-shell.iss')],
+                                     f'/DGxIcon={root / "fixture.ico"}', '/DGxFontNames=fixture.ttf',
+                                     str(ROOT / 'packaging/windows/gx-shell.iss')],
                                     capture_output=True, text=True, errors='replace', timeout=90)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertGreater((root / 'output/compile-only-never-install.exe').stat().st_size, 1000)

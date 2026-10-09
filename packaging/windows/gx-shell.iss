@@ -1,6 +1,12 @@
-; GX Shell: WezTerm GX + Oh My Zsh GX (GX Zsh) + herdr in one per-user installer.
+; GX Shell: Ghostty GX + Oh My Zsh GX (GX Zsh) + herdr in one per-user installer.
 ; Payload is assembled by scripts/gx_shell_package.py; component launchers locate
-; their resources relative to their own executables, so the layout below is fixed.
+; their resources relative to their own executables, so the layout below is fixed:
+; Ghostty GX in {app}\ghostty finds GX Zsh and herdr in {app}\bin (<exe dir>\..\bin).
+; GxFontNames lists the font files the payload ships ("|"-separated); fonts registered by an
+; earlier version that it no longer ships are unregistered before their files are removed.
+#if VER < EncodeVer(7, 1, 0) || VER >= EncodeVer(8, 0, 0)
+  #error Inno Setup 7.1 is required
+#endif
 #ifndef GxVersion
   #error GxVersion is required
 #endif
@@ -15,6 +21,9 @@
 #endif
 #ifndef GxIcon
   #error GxIcon is required
+#endif
+#ifndef GxFontNames
+  #error GxFontNames is required
 #endif
 
 [Setup]
@@ -35,7 +44,7 @@ MinVersion=10.0.17763
 OutputDir={#GxOutput}
 OutputBaseFilename={#GxFilename}
 SetupIconFile={#GxIcon}
-UninstallDisplayIcon={app}\wezterm\wezterm-gui.exe
+UninstallDisplayIcon={app}\ghostty\ghostty.exe
 UninstallDisplayName=GX Shell
 Compression=lzma2
 SolidCompression=yes
@@ -58,16 +67,14 @@ english.LegacyDeclined=Installation cancelled. Uninstall the older GX components
 chinesesimplified.LegacyDeclined=已取消安装。请先卸载旧版 GX 组件。
 english.LegacyFailed=Could not uninstall %1. Close its programs or uninstall it manually, then run setup again.
 chinesesimplified.LegacyFailed=无法卸载 %1。请关闭相关程序或手动卸载后重新运行安装程序。
-english.LegacyMachine=WezTerm GX is installed for all users and cannot be removed by this per-user setup. Uninstall it from Settings > Apps to avoid duplicate shortcuts.
-chinesesimplified.LegacyMachine=检测到为所有用户安装的 WezTerm GX，按用户安装的本程序无法移除它。请在“设置 > 应用”中卸载，以免出现重复的快捷方式。
 english.UnsupportedPath=Choose a local installation path of 4 to 100 characters without semicolons or line breaks.
 chinesesimplified.UnsupportedPath=请选择 4 到 100 个字符、不含分号和换行的本地安装路径。
 english.OwnedElsewhere=Uninstall the existing GX Shell before changing its directory. User profile data will be preserved.
 chinesesimplified.OwnedElsewhere=请先卸载现有的 GX Shell 再更换安装目录，用户配置会保留。
 english.UnownedDirectory=Refusing to install over a non-empty directory that GX Shell does not own.
 chinesesimplified.UnownedDirectory=目标目录非空且不属于 GX Shell，已拒绝安装。
-english.BusyFiles=Close WezTerm GX and GX Zsh, run "herdr server stop", then retry. No processes will be terminated. In-use or unsafe file: %1
-chinesesimplified.BusyFiles=请关闭 WezTerm GX 和 GX Zsh 并运行 herdr server stop 后重试，安装程序不会结束任何进程。被占用或不安全的文件：%1
+english.BusyFiles=Close Ghostty GX (and the WezTerm GX of an earlier GX Shell) and GX Zsh, run "herdr server stop", then retry. No processes will be terminated. In-use or unsafe file: %1
+chinesesimplified.BusyFiles=请关闭 Ghostty GX（以及旧版 GX Shell 自带的 WezTerm GX）和 GX Zsh 并运行 herdr server stop 后重试，安装程序不会结束任何进程。被占用或不安全的文件：%1
 english.HerdrConflictSilent=An existing herdr command conflicts: %1. Resolve it before unattended installation.
 chinesesimplified.HerdrConflictSilent=已有的 herdr 命令存在冲突：%1。请先处理后再静默安装。
 english.HerdrConflict=An existing herdr command was found:%n%1%nGX Shell will not replace it or prepend PATH, so it may still resolve first. Continue?
@@ -76,8 +83,8 @@ english.HerdrCancelled=Installation cancelled because of the existing herdr comm
 chinesesimplified.HerdrCancelled=因已有的 herdr 命令，安装已取消。
 english.HerdrResolution=PATH does not resolve herdr to GX Shell: %1%nUse the GX Zsh shortcut or the full path and resolve the conflict yourself. Nothing else was modified.
 chinesesimplified.HerdrResolution=PATH 中的 herdr 没有指向 GX Shell：%1%n请使用 GX Zsh 快捷方式或完整路径，并自行处理冲突；其他内容未被修改。
-english.UninstallBusy=Close WezTerm GX and GX Zsh, run "herdr server stop", then retry. No processes will be terminated. In-use or unsafe file: %1
-chinesesimplified.UninstallBusy=请关闭 WezTerm GX 和 GX Zsh 并运行 herdr server stop 后重试，卸载程序不会结束任何进程。被占用或不安全的文件：%1
+english.UninstallBusy=Close Ghostty GX and GX Zsh, run "herdr server stop", then retry. No processes will be terminated. In-use or unsafe file: %1
+chinesesimplified.UninstallBusy=请关闭 Ghostty GX 和 GX Zsh 并运行 herdr server stop 后重试，卸载程序不会结束任何进程。被占用或不安全的文件：%1
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
@@ -86,22 +93,23 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 ; 0.1.0 shipped the base snapshot's msys2-runtime 3.6.10-5; the payload now carries 3.6.10-6, so drop the stale
 ; pacman record on upgrade instead of leaving two installed versions in the local database.
 Type: filesandordirs; Name: "{app}\runtime\msys64\var\lib\pacman\local\msys2-runtime-3.6.10-5"
+; GX Shell 0.3.0 and earlier bundled WezTerm GX here. Only the program directory goes: the WezTerm
+; configuration (%USERPROFILE%\.config\wezterm) and its plugins, backups and logs are user data.
+Type: filesandordirs; Name: "{app}\wezterm"
 
 [Files]
 Source: "{#GxPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-; GX Zsh opens in WezTerm GX: the console host lacks the Nerd Font glyphs of the prompt. --domain local keeps it
-; local when the default shell is a WSL domain; --attach skips gui-startup, which would open a second window.
-Name: "{autoprograms}\WezTerm GX"; Filename: "{app}\wezterm\wezterm-gx.exe"; IconFilename: "{app}\wezterm\wezterm-gui.exe"
-Name: "{autoprograms}\GX Zsh"; Filename: "{app}\wezterm\wezterm-gx.exe"; Parameters: "start --domain local --attach -- ""{app}\bin\gx-zsh.exe"""; WorkingDir: "{%USERPROFILE}"; IconFilename: "{app}\bin\gx-zsh.exe"
-Name: "{autodesktop}\WezTerm GX"; Filename: "{app}\wezterm\wezterm-gx.exe"; IconFilename: "{app}\wezterm\wezterm-gui.exe"; Tasks: desktopicon
+; Ghostty GX starts GX Zsh by default because {app}\bin\gx-zsh.exe sits next to its directory. The GX Zsh
+; shortcut runs GX Zsh in the first tab even when another default shell is configured: -e takes the quoted
+; path as one argument without shell parsing, so a profile path with spaces still works.
+Name: "{autoprograms}\Ghostty GX"; Filename: "{app}\ghostty\ghostty.exe"; WorkingDir: "{%USERPROFILE}"
+Name: "{autoprograms}\GX Zsh"; Filename: "{app}\ghostty\ghostty.exe"; Parameters: "-e ""{app}\bin\gx-zsh.exe"""; WorkingDir: "{%USERPROFILE}"; IconFilename: "{app}\bin\gx-zsh.exe"
+Name: "{autodesktop}\Ghostty GX"; Filename: "{app}\ghostty\ghostty.exe"; WorkingDir: "{%USERPROFILE}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\wezterm\wezterm-gx.exe"; Description: "{cm:LaunchProgram,WezTerm GX}"; Flags: nowait postinstall skipifsilent runasoriginaluser
-
-[Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\wezterm-gx.exe"; ValueType: string; ValueData: "{app}\wezterm\wezterm-gx.exe"; Flags: uninsdeletekey
+Filename: "{app}\ghostty\ghostty.exe"; Description: "{cm:LaunchProgram,Ghostty GX}"; WorkingDir: "{%USERPROFILE}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
 const
@@ -109,13 +117,21 @@ const
   FontKey = 'Software\Microsoft\Windows NT\CurrentVersion\Fonts';
   EnvironmentKey = 'Environment';
   UninstallRoot = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\';
+  AppPathsKey = 'Software\Microsoft\Windows\CurrentVersion\App Paths\';
   FontPrefix = 'GXShell ';
-  LegacyCount = 3;
+  FontSuffix = ' (TrueType)';
+  ShippedFonts = '|{#GxFontNames}|';
+  LegacyCount = 2;
+  WezTermLinkCount = 3;
   WM_FONTCHANGE = $001D;
 var
-  Conflict, PreviousPath, WrittenPath, PreviousOwner, PreviousInstall, LegacyWezTermDir: String;
-  HadPath, HadOwner, HadInstall, PathWritten: Boolean;
+  Conflict, PreviousPath, WrittenPath, PreviousOwner, PreviousInstall: String;
+  HadPath, HadOwner, HadInstall, PathWritten, AppPathWritten: Boolean;
   NewFonts: TArrayOfString;
+  KeptLinks: array [0..1] of AnsiString;
+  KeptLinkFound: array [0..1] of Boolean;
+  KeptAppPathNames, KeptAppPathValues: TArrayOfString;
+  KeptAppPath: Boolean;
 
 function CreateFileW(Name: String; Access, Sharing: LongWord; Security: Integer;
   Creation, Attributes: LongWord; Template: Integer): Integer;
@@ -161,12 +177,12 @@ begin
     if NormalizeEntry(NextEntry(Value)) = NormalizeEntry(Entry) then Result := Result + 1;
 end;
 
-{ Separately released components replaced by GX Shell: WezTerm GX, Oh My Zsh GX, Herdr GX. }
+{ Separately released components replaced by GX Shell: Oh My Zsh GX and Herdr GX. A separately
+  installed WezTerm GX is no longer part of GX Shell and is left alone. }
 function LegacyName(Index: Integer): String;
 begin
   case Index of
-    0: Result := 'WezTerm GX';
-    1: Result := 'Oh My Zsh GX';
+    0: Result := 'Oh My Zsh GX';
   else Result := 'Herdr GX';
   end;
 end;
@@ -174,8 +190,7 @@ end;
 function LegacyKey(Index: Integer): String;
 begin
   case Index of
-    0: Result := UninstallRoot + '{734DC47D-4799-46A6-A286-4A64B802370A}_is1';
-    1: Result := UninstallRoot + '{DBB81CDE-31BB-487C-9D03-36C19031CC5D}_is1';
+    0: Result := UninstallRoot + '{DBB81CDE-31BB-487C-9D03-36C19031CC5D}_is1';
   else Result := UninstallRoot + '{532CEFC3-E286-41A4-B097-631BD705DB76}_is1';
   end;
 end;
@@ -203,12 +218,6 @@ function RemoveLegacyInstallations: String;
 var Found: String; I: Integer;
 begin
   Result := '';
-  if not RegQueryStringValue(HKCU, LegacyKey(0), 'InstallLocation', LegacyWezTermDir) or (LegacyWezTermDir = '') then
-    LegacyWezTermDir := ExpandConstant('{localappdata}\Programs\WezTerm GX\');
-  if RegKeyExists(HKLM, LegacyKey(0)) or (IsWin64 and RegKeyExists(HKLM64, LegacyKey(0))) then begin
-    Log('All-users WezTerm GX installation detected; it cannot be removed per-user.');
-    if not WizardSilent then MsgBox(CustomMessage('LegacyMachine'), mbInformation, MB_OK);
-  end;
   Found := '';
   for I := 0 to LegacyCount - 1 do
     if RegKeyExists(HKCU, LegacyKey(I)) then Found := Found + '  ' + LegacyName(I) + #13#10;
@@ -363,6 +372,11 @@ begin
   RegDeleteValue(HKCU, OwnerKey, 'PathEntry');
 end;
 
+function ShipsFont(const Name: String): Boolean;
+begin
+  Result := Pos('|' + Lowercase(Name) + '|', Lowercase(ShippedFonts)) > 0;
+end;
+
 procedure FontsMatching(Installing: Boolean; const Mask: String);
 var Item: TFindRec; Path, Key, Existing: String; N: Integer;
 begin
@@ -370,9 +384,9 @@ begin
     try
       repeat
         Path := ExpandConstant('{app}\fonts\') + Item.Name;
-        Key := FontPrefix + Item.Name + ' (TrueType)';
+        Key := FontPrefix + Item.Name + FontSuffix;
         if Installing then begin
-          if not RegQueryStringValue(HKCU, FontKey, Key, Existing) then begin
+          if ShipsFont(Item.Name) and not RegQueryStringValue(HKCU, FontKey, Key, Existing) then begin
             N := GetArrayLength(NewFonts);
             SetArrayLength(NewFonts, N + 1);
             NewFonts[N] := Item.Name;
@@ -401,11 +415,65 @@ begin
   SendBroadcastNotifyMessage(WM_FONTCHANGE, 0, 0);
 end;
 
+{ Before the new payload is copied: unregister every font that an earlier version registered and this
+  payload no longer ships, then delete its file so that it is not registered again. }
+procedure RemoveUnshippedFonts;
+var Names: TArrayOfString; I: Integer; Key, Name, Path, Current: String; Changed: Boolean;
+begin
+  Changed := False;
+  if not RegGetValueNames(HKCU, OwnerKey + '\Fonts', Names) then exit;
+  for I := 0 to GetArrayLength(Names) - 1 do begin
+    Key := Names[I];
+    if (Length(Key) <= Length(FontPrefix) + Length(FontSuffix)) or (Copy(Key, 1, Length(FontPrefix)) <> FontPrefix) or
+       (Copy(Key, Length(Key) - Length(FontSuffix) + 1, Length(FontSuffix)) <> FontSuffix) then continue;
+    Name := Copy(Key, Length(FontPrefix) + 1, Length(Key) - Length(FontPrefix) - Length(FontSuffix));
+    if ShipsFont(Name) or not RegQueryStringValue(HKCU, OwnerKey + '\Fonts', Key, Path) then continue;
+    if NormalizeEntry(Path) <> NormalizeEntry(ExpandConstant('{app}\fonts\') + Name) then continue;
+    if RegQueryStringValue(HKCU, FontKey, Key, Current) and (Current = Path) then begin
+      RemoveFontResourceExW(Path, 0, 0);
+      RegDeleteValue(HKCU, FontKey, Key);
+    end;
+    RegDeleteValue(HKCU, OwnerKey + '\Fonts', Key);
+    if FileExists(Path) and not DeleteFile(Path) then Log('Unshipped font file was not deleted: ' + Path);
+    Log('Unregistered the font no longer shipped: ' + Name);
+    Changed := True;
+  end;
+  if Changed then SendBroadcastNotifyMessage(WM_FONTCHANGE, 0, 0);
+end;
+
+function GhosttyPath: String;
+begin
+  Result := ExpandConstant('{app}\ghostty\ghostty.exe');
+end;
+
+{ App Paths\ghostty.exe is shared with a separately installed Ghostty GX: write it only when it is absent
+  or already ours, and remove it only while it still points to this installation. }
+procedure RegisterAppPath;
+var Current: String;
+begin
+  if RegQueryStringValue(HKCU, AppPathsKey + 'ghostty.exe', '', Current) then begin
+    if NormalizeEntry(Current) <> NormalizeEntry(GhosttyPath) then begin
+      Log('App Paths\ghostty.exe belongs to another installation: ' + Current);
+      exit;
+    end;
+  end else AppPathWritten := True;
+  if not RegWriteStringValue(HKCU, AppPathsKey + 'ghostty.exe', '', GhosttyPath) then
+    RaiseException('Cannot register App Paths\ghostty.exe.');
+end;
+
+procedure UnregisterAppPath;
+var Current: String;
+begin
+  if RegQueryStringValue(HKCU, AppPathsKey + 'ghostty.exe', '', Current) and
+     (NormalizeEntry(Current) = NormalizeEntry(GhosttyPath)) then
+    RegDeleteKeyIncludingSubkeys(HKCU, AppPathsKey + 'ghostty.exe');
+end;
+
 procedure RollbackRegistration;
 var Current, Key, Path: String; I: Integer;
 begin
   for I := 0 to GetArrayLength(NewFonts) - 1 do begin
-    Key := FontPrefix + NewFonts[I] + ' (TrueType)';
+    Key := FontPrefix + NewFonts[I] + FontSuffix;
     Path := ExpandConstant('{app}\fonts\') + NewFonts[I];
     if RegQueryStringValue(HKCU, FontKey, Key, Current) and (Current = Path) then begin
       RemoveFontResourceExW(Path, 0, 0);
@@ -414,6 +482,7 @@ begin
     if RegQueryStringValue(HKCU, OwnerKey + '\Fonts', Key, Current) and (Current = Path) then
       RegDeleteValue(HKCU, OwnerKey + '\Fonts', Key);
   end;
+  if AppPathWritten then UnregisterAppPath;
   if PathWritten then begin
     RegQueryStringValue(HKCU, EnvironmentKey, 'Path', Current);
     if Current = WrittenPath then begin
@@ -430,45 +499,104 @@ begin
   else RegDeleteValue(HKCU, OwnerKey, 'InstallDir');
 end;
 
-{ Retarget the shortcut created by the older dotfiles/install.ps1 chain, whether it still points
-  there or into the directory of the replaced WezTerm GX 0.3.0, whose installer had moved it. }
-procedure MigrateLegacyShortcut;
-var LinkPath, TargetPath, TargetName, LegacyRoot: String; Shell, Shortcut: Variant;
+{ What GX Shell 0.3.0 and earlier created for the bundled WezTerm GX: two shortcuts, the older
+  "WezTerm (gx)" shortcut it retargeted, and App Paths\wezterm-gx.exe. They are ours only while they
+  point into the wezterm directory of this installation; a separately installed WezTerm GX uses the
+  same names. }
+function WezTermLink(Index: Integer): String;
 begin
-  LinkPath := ExpandConstant('{userprograms}\WezTerm (gx).lnk');
-  if not FileExists(LinkPath) then exit;
+  case Index of
+    0: Result := ExpandConstant('{autoprograms}\WezTerm GX.lnk');
+    1: Result := ExpandConstant('{autodesktop}\WezTerm GX.lnk');
+  else Result := ExpandConstant('{userprograms}\WezTerm (gx).lnk');
+  end;
+end;
+
+function InOldWezTerm(const Path: String): Boolean;
+begin
+  Result := Pos(NormalizeEntry(ExpandConstant('{app}\wezterm')) + '\', NormalizeEntry(Path)) = 1;
+end;
+
+function LinkTarget(const Path: String): String;
+var Shell, Shortcut: Variant;
+begin
+  Result := '';
   try
     Shell := CreateOleObject('WScript.Shell');
-    Shortcut := Shell.CreateShortcut(LinkPath);
-    TargetPath := Shortcut.TargetPath;
-    TargetPath := Lowercase(TargetPath);
-    TargetName := ExtractFileName(TargetPath);
-    LegacyRoot := Lowercase(ExpandConstant('{localappdata}\Programs\wezterm-gx\'));
-    if ((Pos(LegacyRoot, TargetPath) = 1) and (TargetName = 'wezterm-gui.exe')) or
-       ((NormalizeEntry(ExtractFilePath(TargetPath)) = NormalizeEntry(LegacyWezTermDir)) and
-        ((TargetName = 'wezterm-gx.exe') or (TargetName = 'wezterm-gui.exe'))) then begin
-      Shortcut.TargetPath := ExpandConstant('{app}\wezterm\wezterm-gx.exe');
-      Shortcut.IconLocation := ExpandConstant('{app}\wezterm\wezterm-gui.exe') + ',0';
-      Shortcut.Save();
-    end;
+    Shortcut := Shell.CreateShortcut(Path);
+    Result := Shortcut.TargetPath;
   except
-    Log('Legacy shortcut was not changed: ' + GetExceptionMessage);
+    Log('Cannot read shortcut ' + Path + ': ' + GetExceptionMessage);
   end;
+end;
+
+procedure RemoveOldWezTerm;
+var I: Integer; Path, Current: String;
+begin
+  for I := 0 to WezTermLinkCount - 1 do begin
+    Path := WezTermLink(I);
+    if FileExists(Path) and InOldWezTerm(LinkTarget(Path)) then begin
+      if DeleteFile(Path) then Log('Removed the WezTerm GX shortcut of an earlier GX Shell: ' + Path)
+      else Log('Could not remove ' + Path);
+    end;
+  end;
+  if RegQueryStringValue(HKCU, AppPathsKey + 'wezterm-gx.exe', '', Current) and InOldWezTerm(Current) then
+    RegDeleteKeyIncludingSubkeys(HKCU, AppPathsKey + 'wezterm-gx.exe');
+end;
+
+{ The uninstall log of an upgraded 0.3.0 installation still deletes its WezTerm GX shortcuts and
+  App Paths\wezterm-gx.exe. Keep what a separately installed WezTerm GX created since then. }
+procedure KeepForeignWezTerm;
+var I: Integer; Path, Target: String;
+begin
+  for I := 0 to 1 do begin
+    KeptLinkFound[I] := False;
+    Path := WezTermLink(I);
+    if FileExists(Path) then begin
+      Target := LinkTarget(Path);
+      if not InOldWezTerm(Target) then KeptLinkFound[I] := LoadStringFromFile(Path, KeptLinks[I]);
+    end;
+  end;
+  KeptAppPath := False;
+  if RegQueryStringValue(HKCU, AppPathsKey + 'wezterm-gx.exe', '', Target) then
+    if not InOldWezTerm(Target) then
+      if RegGetValueNames(HKCU, AppPathsKey + 'wezterm-gx.exe', KeptAppPathNames) then begin
+        SetArrayLength(KeptAppPathValues, GetArrayLength(KeptAppPathNames));
+        for I := 0 to GetArrayLength(KeptAppPathNames) - 1 do
+          RegQueryStringValue(HKCU, AppPathsKey + 'wezterm-gx.exe', KeptAppPathNames[I], KeptAppPathValues[I]);
+        KeptAppPath := True;
+      end;
+end;
+
+procedure RestoreForeignWezTerm;
+var I: Integer;
+begin
+  for I := 0 to 1 do
+    if KeptLinkFound[I] and not FileExists(WezTermLink(I)) then begin
+      SaveStringToFile(WezTermLink(I), KeptLinks[I], False);
+      Log('Restored the shortcut of a separately installed WezTerm GX: ' + WezTermLink(I));
+    end;
+  if KeptAppPath and not RegKeyExists(HKCU, AppPathsKey + 'wezterm-gx.exe') then
+    for I := 0 to GetArrayLength(KeptAppPathNames) - 1 do
+      RegWriteStringValue(HKCU, AppPathsKey + 'wezterm-gx.exe', KeptAppPathNames[I], KeptAppPathValues[I]);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var Failure: String;
 begin
+  if CurStep = ssInstall then
+    RemoveUnshippedFonts;
   if CurStep = ssPostInstall then begin
     try
       AddOwnedPath;
       Fonts(True);
+      RegisterAppPath;
     except
       Failure := GetExceptionMessage;
       RollbackRegistration;
       RaiseException(Failure);
     end;
-    MigrateLegacyShortcut;
+    RemoveOldWezTerm;
     Conflict := ResolvedHerdr;
     Log('Persistent PATH resolves herdr to: ' + Conflict);
     if (NormalizeEntry(Conflict) <> NormalizeEntry(ExpandConstant('{app}\bin\herdr.exe'))) and not WizardSilent then
@@ -491,10 +619,14 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then begin
+    KeepForeignWezTerm;
     RemoveOwnedPath;
     Fonts(False);
+    UnregisterAppPath;
     RegDeleteValue(HKCU, OwnerKey, 'InstallDir');
     RegDeleteKeyIfEmpty(HKCU, OwnerKey + '\Fonts');
     RegDeleteKeyIfEmpty(HKCU, OwnerKey);
   end;
+  if CurUninstallStep = usPostUninstall then
+    RestoreForeignWezTerm;
 end;

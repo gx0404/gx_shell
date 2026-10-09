@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# GX Shell deb lifecycle smoke for a disposable Ubuntu container (run as root):
-# optional legacy-package replacement (0.3.0 configuration migration), install, entry
-# points, GX Zsh, herdr identity / managed update / completion / real Zsh pane, WezTerm seeding,
-# fonts and configuration cases (tests/pure_fn_test.lua), GUI default shell, reinstall, removal
-# and purge with user data preserved and another account's HOME untouched.
+# GX Shell deb lifecycle smoke for a disposable Ubuntu 24.04 container (run as root): install, entry
+# points, GX Zsh, herdr identity / managed update / completion / real Zsh pane, Ghostty GX identity and
+# the bundled fonts, Ghostty GX running GX Zsh under Xvfb with software OpenGL, reinstall, removal and
+# purge with user data preserved (the Ghostty GX configuration, the WezTerm configuration an earlier
+# GX Shell left behind, the GX Zsh profile) and another account's HOME untouched.
 # Required GX_SMOKE_PYTHON: absolute Python >= 3.9 with the standard library used by the
 # coordinator package/source modules and the locked herdr probe; no system-python fallback.
 # Exit status: 0 when every check passes; 2 when refused (not disposable); 1 on failure.
@@ -143,8 +143,6 @@ runuser -u "$GX_SMOKE_USER" -- test -r "$herdr_probe" ||
 cat /etc/os-release > "$evidence/os-release"
 sha256sum "$package" > "$evidence/package.sha256"
 witness_user=gx-smoke-witness
-legacy_launch_sha=3b08d62514968129834d4e13086b31bc09ec30cc9f9c6204f530ab39d24966bd
-payload=/usr/share/wezterm-gx/dotfiles/wezterm-config
 
 step() { printf '=== %s\n' "$*"; }
 fail() {
@@ -155,24 +153,14 @@ run_user() {
     runuser -u "$GX_SMOKE_USER" -- env HOME="$test_home" XDG_CONFIG_HOME="$test_home/.config" \
         XDG_DATA_HOME="$test_home/.local/share" XDG_STATE_HOME="$test_home/.local/state" LANG=C.UTF-8 "$@"
 }
-run_legacy_user() {
-    runuser -u "$GX_SMOKE_USER" -- env -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME \
-        HOME="$legacy_home" LANG=C.UTF-8 "$@"
-}
-assert_config_log() {
-    if grep -Eq 'plugin load failed|Error loading configuration|Failed to require' "$1"; then
-        cat "$1" >&2
-        exit 1
-    fi
-}
 assert_entry_points() {
     local name target
-    for name in gx-zsh herdr wezterm-gx wezterm-gx-gui; do
+    for name in gx-zsh herdr ghostty-gx; do
         [ "$(command -v "$name")" = "/usr/bin/$name" ]
         [ "$(dpkg-query -S "/usr/bin/$name")" = "gx-shell: /usr/bin/$name" ]
         case "$name" in
             gx-zsh|herdr) target="/usr/lib/ohmyzsh-gx/bin/$name" ;;
-            *) target="/usr/lib/wezterm-gx/$name" ;;
+            *) target=/usr/lib/ghostty-gx/bin/ghostty ;;
         esac
         [ "$(readlink -f "/usr/bin/$name")" = "$target" ]
         [ "$(dpkg-query -S "$target")" = "gx-shell: $target" ]
@@ -192,8 +180,11 @@ home_manifest() {
     find "$2" -printf '%y %m %u:%g %s %T@ %p %l\n' | LC_ALL=C sort
     find "$2" -type f -exec sha256sum {} + | LC_ALL=C sort -k2
 }
-config_manifest() {
-    (cd "$1" && find . -type f -exec sha256sum {} + | LC_ALL=C sort -k2)
+# The Ghostty GX configuration and the WezTerm configuration an earlier GX Shell left behind; GX Shell
+# never reads, migrates or removes either.
+assert_user_configs() {
+    (cd "$test_home" && sha256sum --quiet -c "$evidence_root/user-configs.sha256") ||
+        fail "$1 changed the Ghostty GX or WezTerm configuration"
 }
 readonly evidence_root="$evidence"
 expose_evidence() {
@@ -233,40 +224,23 @@ id -u "$witness_user" > /dev/null 2>&1 || useradd --create-home "$witness_user"
 witness_home="$(getent passwd "$witness_user" | cut -d: -f6)"
 home_manifest "$witness_user" "$witness_home" > "$evidence/witness-home.before"
 
-if [ -n "${GX_SMOKE_LEGACY_DEB:-}" ]; then
-    step "legacy $(dpkg-deb --field "$GX_SMOKE_LEGACY_DEB" Package) is replaced by gx-shell"
-    apt-get install -y "$GX_SMOKE_LEGACY_DEB" > "$evidence/legacy-install.log" 2>&1
-    legacy="$(dpkg-deb --field "$GX_SMOKE_LEGACY_DEB" Package)"
-    legacy_home="$(mktemp -d)"
-    legacy_config="$legacy_home/.config/wezterm"
-    chown "$GX_SMOKE_USER" "$legacy_home"
-    run_legacy_user wezterm-gx --gx-initialize-only
-    sha256sum "$legacy_config/config/launch.lua" | tee "$evidence/legacy-launch.sha256"
-    [ "$(cut -d' ' -f1 "$evidence/legacy-launch.sha256")" = "$legacy_launch_sha" ] ||
-        fail "$legacy did not seed the released 0.3.0 launch.lua"
-    [ ! -e "$legacy_config/utils/gx-shell.lua" ] || fail "$legacy already seeded utils/gx-shell.lua"
-    printf '{\n  "font_size": 12.0\n}\n' > "$evidence/gui-settings.json"
-    install -o "$GX_SMOKE_USER" -m 0644 "$evidence/gui-settings.json" "$legacy_config/gui-settings.json"
-    config_manifest "$legacy_config" > "$evidence/legacy-config.before"
-fi
+step user configuration of Ghostty GX and of an earlier WezTerm GX exists before the installation
+run_user bash -c '
+    set -euo pipefail
+    mkdir -p "$XDG_CONFIG_HOME/ghostty" "$XDG_CONFIG_HOME/wezterm"
+    printf "font-size = 13\n" > "$XDG_CONFIG_HOME/ghostty/config.ghostty"
+    printf "%s\n" "-- WezTerm GX configuration left by an earlier GX Shell" > "$XDG_CONFIG_HOME/wezterm/wezterm.lua"
+'
+(cd "$test_home" && sha256sum .config/ghostty/config.ghostty .config/wezterm/wezterm.lua) > "$evidence/user-configs.sha256"
 
 step install
 HOME="$witness_home" apt-get install -y "$package" > "$evidence/install.log" 2>&1 ||
     { cat "$evidence/install.log" >&2; exit 1; }
 dpkg-query -W -f='${Package} ${Version}\n' gx-shell | tee "$evidence/installed.txt"
-if [ -n "${legacy:-}" ]; then
-    if dpkg-query -W -f='${db:Status-Status}' "$legacy" 2>/dev/null | grep -qx installed; then
-        echo "$legacy is still installed next to gx-shell" >&2
-        exit 1
-    fi
-    # fontconfig 2.13 (Ubuntu 20.04) leaves a .uuid behind, so dpkg keeps the emptied directory
-    # of the replaced package until it is purged; only its fonts must be gone.
-    find /usr/share/fonts/truetype/wezterm-gx -mindepth 1 ! -name .uuid > "$evidence/legacy-fonts-left.txt" 2>/dev/null || true
-    [ ! -s "$evidence/legacy-fonts-left.txt" ] || fail "fonts of $legacy remain: $(cat "$evidence/legacy-fonts-left.txt")"
-fi
+assert_user_configs install
 
 assert_runtime() {
-    local evidence="$1" provenance="$2"
+    local evidence="$1" provenance="$2" opengl major minor
     step entry points
     assert_entry_points
 
@@ -275,8 +249,11 @@ assert_runtime() {
     cat "$evidence/gx-zsh.txt"
     grep -q 'zsh=5\.9\.2 omz=/usr/share/ohmyzsh-gx' "$evidence/gx-zsh.txt"
 
-    step herdr package identity, managed update and packaged completion
+    step herdr and Ghostty GX package identity, herdr managed update and packaged completion
     run_user herdr --version | tee "$evidence/herdr-version.txt"
+    run_user ghostty-gx +version > "$evidence/ghostty-version.txt" 2> "$evidence/ghostty-version.stderr" ||
+        { cat "$evidence/ghostty-version.stderr" >&2; fail 'ghostty-gx +version failed'; }
+    cat "$evidence/ghostty-version.txt"
     "$GX_SMOKE_PYTHON" -I -B - "$evidence" "$herdr_probe" "$provenance" <<'PY'
 import hashlib
 import json
@@ -291,6 +268,12 @@ records = [record for record in receipt['stages']['ohmyzsh']['payload']
            if record['path'] == 'usr/lib/ohmyzsh-gx/lib/herdr/herdr']
 if len(records) != 1 or hashlib.sha256(Path('/usr/lib/ohmyzsh-gx/lib/herdr/herdr').read_bytes()).hexdigest() != records[0]['sha256']:
     raise SystemExit('installed herdr hash differs from stage provenance')
+ghostty = receipt['stages']['gx_ghostty']
+lines = (evidence / 'ghostty-version.txt').read_text(encoding='utf-8').splitlines()
+if lines[:1] != ['Ghostty ' + ghostty['product_version']] or '  - version: ' + ghostty['product_version'] not in lines:
+    raise SystemExit('Ghostty GX version differs from the locked Ghostty GX stage')
+if hashlib.sha256(Path('/usr/lib/ghostty-gx/bin/ghostty').read_bytes()).hexdigest() != ghostty['binaries']['ghostty']:
+    raise SystemExit('installed Ghostty GX hash differs from stage provenance')
 if hashlib.sha256(probe.read_bytes()).hexdigest() != receipt['herdr_probe']['sha256']:
     raise SystemExit('herdr probe changed after provenance preflight')
 PY
@@ -376,81 +359,48 @@ if __name__ == '__main__':
 PY
     grep -q '"status": "PASS"' "$evidence/herdr-probe.json"
 
-    step WezTerm seeds its configuration and finds the bundled fonts
-    run_user wezterm-gx --version | tee "$evidence/wezterm-version.txt"
-    run_user wezterm-gx --gx-initialize-only > "$evidence/wezterm-init.log" 2>&1
-    assert_config_log "$evidence/wezterm-init.log"
-    test -f "$test_home/.config/wezterm/wezterm.lua"
-    test -f "$test_home/.config/wezterm/utils/gx-shell.lua"
-    test "$(find "$test_home/.local/share/wezterm/plugins" -path '*/.git/HEAD' | wc -l)" -eq 4
-    run_user wezterm-gx ls-fonts > "$evidence/fonts.log" 2>&1
-    assert_config_log "$evidence/fonts.log"
-    grep -q '/usr/share/fonts/truetype/gx-shell/JetBrainsMonoNerdFont-Regular.ttf' "$evidence/fonts.log"
-    grep -q '/usr/share/fonts/truetype/gx-shell/NotoSansCJK-Regular.ttc' "$evidence/fonts.log"
+    step Ghostty GX finds the bundled fonts
+    run_user ghostty-gx +list-fonts '--family=JetBrainsMono Nerd Font' > "$evidence/ghostty-fonts.txt" 2> "$evidence/ghostty-fonts.stderr" ||
+        { cat "$evidence/ghostty-fonts.stderr" >&2; fail 'ghostty-gx +list-fonts failed'; }
+    grep -Fxq 'JetBrainsMono Nerd Font' "$evidence/ghostty-fonts.txt" ||
+        fail 'Ghostty GX does not find the bundled JetBrainsMono Nerd Font; see ghostty-fonts.txt'
     fc-list > "$evidence/fc-list.txt"
-    grep -q '/truetype/gx-shell/' "$evidence/fc-list.txt"
+    grep -q '/usr/share/fonts/truetype/gx-shell/JetBrainsMonoNerdFont-Regular.ttf' "$evidence/fc-list.txt"
+    grep -q '/usr/share/fonts/truetype/gx-shell/NotoSansCJK-Regular.ttc' "$evidence/fc-list.txt"
 
-    step WezTerm configuration cases pass on the packaged binary and configuration
-    # A failing require falls back to default configuration; only the final ALL PASS counts.
-    run_user timeout 120 wezterm-gx --config-file "$payload/tests/pure_fn_test.lua" show-keys > "$evidence/pure-fn-test.log" 2>&1 ||
-        { cat "$evidence/pure-fn-test.log" >&2; fail 'wezterm-gx show-keys failed on tests/pure_fn_test.lua'; }
-    grep -a 'PURE_FN_TEST' "$evidence/pure-fn-test.log" || true
-    grep -aq 'PURE_FN_TEST: ALL PASS' "$evidence/pure-fn-test.log" ||
-        fail 'tests/pure_fn_test.lua did not pass on the packaged WezTerm; see pure-fn-test.log'
-
-    step WezTerm GUI starts GX Zsh by default with software rendering
-    run_user timeout 90 xvfb-run -a bash -c '
+    step Ghostty GX runs GX Zsh under Xvfb with software OpenGL
+    # The runner has no GPU: Mesa llvmpipe proves the software rendering path only. -e runs gx-zsh
+    # directly, without a shell in between, so its Zsh is a child of the Ghostty GX process.
+    run_user env GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1 timeout 120 \
+        xvfb-run -a --server-args='-screen 0 1280x800x24' bash -c '
         set -euo pipefail
-        LIBGL_ALWAYS_SOFTWARE=1 wezterm-gx-gui --config front_end=\"OpenGL\" --config enable_wayland=false \
-            start --always-new-process --no-auto-connect > "$1/gui.log" 2>&1 &
+        ghostty-gx -e gx-zsh > "$1/gui.log" 2>&1 &
         gui=$!
         trap "kill $gui 2>/dev/null || true; wait $gui 2>/dev/null || true" EXIT
-        for _ in $(seq 1 60); do
+        for _ in $(seq 1 120); do
             if pgrep -P "$gui" -u "$(id -u)" -f "^/usr/lib/ohmyzsh-gx/libexec/zsh/zsh" > "$1/gui-shell.pid"; then break; fi
             sleep 0.5
         done
         ps -o pid,ppid,args -u "$(id -u)" > "$1/gui-processes.txt"
         test -s "$1/gui-shell.pid"
-        test "$(readlink "/proc/$gui/exe")" = /usr/lib/wezterm-gx/wezterm-gui
+        test "$(readlink "/proc/$gui/exe")" = /usr/lib/ghostty-gx/bin/ghostty
         sleep 5
         kill -0 "$gui"
-        xwd -root -silent > "$1/screen.xwd"
-        ffmpeg -hide_banner -loglevel error -y -i "$1/screen.xwd" -frames:v 1 "$1/linux.png"
+        kill -0 "$(head -n 1 "$1/gui-shell.pid")"
+        scrot "$1/linux.png"
     ' bash "$evidence"
-    assert_config_log "$evidence/gui.log"
+    test -s "$evidence/linux.png"
+    opengl="$(grep -aEo 'loaded OpenGL [0-9]+\.[0-9]+' "$evidence/gui.log" | tail -n 1 || true)"
+    [ -n "$opengl" ] || fail 'the Ghostty GX log has no "loaded OpenGL" line; see gui.log'
+    opengl="${opengl#loaded OpenGL }"
+    major="${opengl%%.*}"
+    minor="${opengl#*.}"
+    [ "$major" -gt 4 ] || { [ "$major" -eq 4 ] && [ "$minor" -ge 3 ]; } ||
+        fail "Ghostty GX loaded OpenGL $opengl; it needs 4.3"
+    printf '%s\n' "$opengl" > "$evidence/opengl-version.txt"
+    assert_user_configs 'Ghostty GX'
 }
 assert_runtime "$evidence" "$evidence/smoke-provenance.json"
-
-if [ -n "${legacy:-}" ]; then
-    step "the untouched 0.3.0 configuration is migrated file by file"
-    run_legacy_user wezterm-gx --gx-initialize-only
-    managed="$legacy_home/.local/share/wezterm-gx"
-    cp "$managed/config-migration.log" "$evidence/legacy-migration.log" 2>/dev/null || true
-    # Released copies are replaced and missing files added, so every shipped file matches the payload.
-    (cd "$payload" && find . -type f -exec sha256sum {} +) > "$evidence/payload.sha256"
-    (cd "$legacy_config" && sha256sum --quiet -c "$evidence/payload.sha256") ||
-        fail 'the 0.3.0 configuration was not upgraded to the packaged files; see legacy-migration.log'
-    find "$legacy_config" -type l > "$evidence/legacy-links.txt"
-    [ ! -s "$evidence/legacy-links.txt" ] || fail 'the migrated configuration contains symlinks'
-    backups=("$managed"/backups/*/wezterm-config)
-    [ "${#backups[@]}" -eq 1 ] && [ -d "${backups[0]}" ] ||
-        fail "expected one configuration backup, found: ${backups[*]}"
-    [ ! -e "${backups[0]}/gui-settings.json" ] && cmp -s "$evidence/gui-settings.json" "$legacy_config/gui-settings.json" ||
-        fail 'the migration touched gui-settings.json'
-    # Each 0.3.0 file is either untouched (files no longer shipped) or backed up before it was replaced.
-    while read -r sum rel; do
-        rel=${rel#\*}
-        [ -f "$legacy_config/$rel" ] || fail "$rel disappeared during the migration"
-        [ "$(sha256sum < "$legacy_config/$rel" | cut -d' ' -f1)" = "$sum" ] && continue
-        [ "$(sha256sum < "${backups[0]}/$rel" | cut -d' ' -f1)" = "$sum" ] ||
-            fail "$rel was replaced without a backup of the 0.3.0 copy"
-    done < "$evidence/legacy-config.before"
-    [ "$(sha256sum < "${backups[0]}/config/launch.lua" | cut -d' ' -f1)" = "$legacy_launch_sha" ] ||
-        fail "${backups[0]}/config/launch.lua is not the 0.3.0 launch.lua"
-    run_legacy_user wezterm-gx ls-fonts > "$evidence/legacy-fonts.log" 2>&1
-    assert_config_log "$evidence/legacy-fonts.log"
-    find "$legacy_config" "${backups[0]}" -type f -exec sha256sum {} + > "$evidence/legacy-data.sha256"
-fi
 
 user_data_manifest() {
     "$GX_SMOKE_PYTHON" -I -B - "$test_home" <<'PY'
@@ -462,7 +412,7 @@ import sys
 
 home = Path(sys.argv[1])
 records = []
-for relative in ('.config/wezterm/wezterm.lua', '.config/wezterm/gui-settings.json',
+for relative in ('.config/ghostty/config.ghostty', '.config/wezterm/wezterm.lua',
                  '.config/ohmyzsh-gx/profile/.zshrc', '.local/share/gx-smoke/preserve.txt',
                  '.local/state/gx-smoke/preserve.txt'):
     path = home / relative
@@ -482,13 +432,14 @@ assert_user_data() {
 step reinstall keeps user data and runtime behavior
 run_user bash -c '
     set -euo pipefail
+    printf "\n# gx-shell-preserve-marker\n" >> "$XDG_CONFIG_HOME/ghostty/config.ghostty"
     printf "\n-- gx-shell-preserve-marker\n" >> "$XDG_CONFIG_HOME/wezterm/wezterm.lua"
     printf "\n# gx-shell-preserve-marker\n" >> "$XDG_CONFIG_HOME/ohmyzsh-gx/profile/.zshrc"
-    printf "{\"font_size\": 13.0}\n" > "$XDG_CONFIG_HOME/wezterm/gui-settings.json"
     mkdir -p "$XDG_DATA_HOME/gx-smoke" "$XDG_STATE_HOME/gx-smoke"
     printf "gx-shell-user-data\n" > "$XDG_DATA_HOME/gx-smoke/preserve.txt"
     printf "gx-shell-user-state\n" > "$XDG_STATE_HOME/gx-smoke/preserve.txt"
 '
+(cd "$test_home" && sha256sum .config/ghostty/config.ghostty .config/wezterm/wezterm.lua) > "$evidence/user-configs.sha256"
 user_data_manifest > "$evidence/user-data.before.json"
 HOME="$witness_home" apt-get install -y --reinstall "$package" > "$evidence/reinstall.log" 2>&1 ||
     { cat "$evidence/reinstall.log" >&2; exit 1; }
@@ -501,8 +452,7 @@ assert_user_data after-reinstall-runtime
 
 step remove keeps user data
 HOME="$witness_home" apt-get remove -y gx-shell > "$evidence/remove.log" 2>&1
-assert_absent /usr/bin/gx-zsh /usr/bin/herdr /usr/bin/wezterm-gx /usr/bin/wezterm-gx-gui \
-    /usr/lib/ohmyzsh-gx /usr/lib/wezterm-gx
+assert_absent /usr/bin/gx-zsh /usr/bin/herdr /usr/bin/ghostty-gx /usr/lib/ohmyzsh-gx /usr/lib/ghostty-gx
 assert_user_data after-remove
 test -d "$test_home/.config/ohmyzsh-gx/profile"
 
@@ -510,23 +460,22 @@ step purge removes what the package owned and keeps user data
 HOME="$witness_home" dpkg --purge gx-shell > "$evidence/purge.log" 2>&1 || { cat "$evidence/purge.log" >&2; exit 1; }
 status="$(dpkg-query -W -f='${db:Status-Status}' gx-shell 2>/dev/null || true)"
 [ -z "$status" ] || [ "$status" = not-installed ] || fail "gx-shell is still $status after purge"
-assert_absent /usr/bin/gx-zsh /usr/bin/herdr /usr/bin/wezterm-gx /usr/bin/wezterm-gx-gui \
-    /usr/share/ohmyzsh-gx /usr/share/wezterm-gx /usr/lib/ohmyzsh-gx /usr/lib/wezterm-gx \
-    /usr/share/fonts/truetype/gx-shell /usr/share/applications/org.gx0404.wezterm.desktop
+assert_absent /usr/bin/gx-zsh /usr/bin/herdr /usr/bin/ghostty-gx \
+    /usr/share/ohmyzsh-gx /usr/lib/ohmyzsh-gx /usr/lib/ghostty-gx /usr/share/doc/ghostty-gx \
+    /usr/share/fonts/truetype/gx-shell /usr/share/applications/com.gx0404.ghostty-gx.desktop
+find /usr/share/icons -name 'com.gx0404.ghostty-gx.*' > "$evidence/icons-purged.txt"
+[ ! -s "$evidence/icons-purged.txt" ] || fail "Ghostty GX icons remain: $(cat "$evidence/icons-purged.txt")"
 fc-list > "$evidence/fc-list-purged.txt"
 if grep -q '/truetype/gx-shell/' "$evidence/fc-list-purged.txt"; then
     fail 'fc-list still lists the GX Shell fonts after purge'
 fi
 assert_user_data after-purge
 test -d "$test_home/.config/ohmyzsh-gx/profile"
-if [ -n "${legacy:-}" ]; then
-    sha256sum -c "$evidence/legacy-data.sha256"
-fi
 
 step "maintainer scripts left $witness_home untouched"
 home_manifest "$witness_user" "$witness_home" > "$evidence/witness-home.after"
 diff -u "$evidence/witness-home.before" "$evidence/witness-home.after"
-"$GX_SMOKE_PYTHON" -I -B - "$evidence/smoke-provenance.json" "${GX_SMOKE_LEGACY_DEB:-}" <<'PY'
+"$GX_SMOKE_PYTHON" -I -B - "$evidence/smoke-provenance.json" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -536,12 +485,13 @@ receipt = json.loads(path.read_text(encoding='utf-8'))
 receipt['status'] = 'PASS'
 receipt['python_runtime'] = json.loads((path.parent / 'python-runtime.json').read_text(encoding='utf-8'))
 receipt['python_user_runtime'] = json.loads((path.parent / 'python-user-runtime.json').read_text(encoding='utf-8'))
-receipt['legacy_release_upgrade'] = 'PASS_EXPLICIT_INPUT_ONLY' if sys.argv[2] else 'NOT_RUN'
+receipt['legacy_release_upgrade'] = 'NOT_RUN'
 receipt['coverage'] = {
     'install': 'PASS', 'same_version_reinstall': 'PASS', 'reinstall_runtime': 'PASS',
     'remove': 'PASS', 'purge': 'PASS', 'user_configuration': 'PASS', 'user_data_content_and_ownership': 'PASS',
-    'witness_home_unchanged': 'PASS', 'gui_renderer': 'Xvfb/software OpenGL', 'hardware_gpu': 'NOT_RUN',
-    'legacy_wezterm': receipt['legacy_release_upgrade'], 'previous_gx_shell': 'NOT_RUN',
+    'witness_home_unchanged': 'PASS', 'ghostty_gx_runs_gx_zsh': 'PASS',
+    'gui_renderer': 'Xvfb/Mesa llvmpipe (software OpenGL)', 'hardware_gpu': 'NOT_RUN',
+    'desktop_input_echo_redraw': 'NOT_RUN', 'images_reviewed': False, 'previous_gx_shell': 'NOT_RUN',
 }
 path.write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
 print('Legacy release upgrade: ' + receipt['legacy_release_upgrade'])

@@ -26,17 +26,17 @@ BUILD_STEPS = {
     "windows": "Assemble and build the GX Shell installer",
 }
 STAGES = {
-    "wezterm-windows": ("wezterm", "windows", "Build and stage WezTerm for Windows",
-                        "scripts/gx_package.py windows", "stage.tar"),
-    "wezterm-linux": ("wezterm", "linux", "Build and stage WezTerm on the Ubuntu 20.04 baseline",
-                      "scripts/gx_package.py deb", "stage.tar"),
+    "ghostty-windows": (package.GHOSTTY, "windows", "Build and stage Ghostty GX for Windows",
+                        "scripts/gx_package.py windows --build", "stage.tar"),
+    "ghostty-linux": (package.GHOSTTY, "linux", "Build and stage Ghostty GX on Ubuntu 24.04",
+                      "scripts/gx_package.py deb --build", "stage.tar"),
     "shell-windows": ("ohmyzsh", "windows", "Build locked herdr, Zsh and dependencies, then stage Oh My Zsh GX",
                       "platform=windows-x64", "shell-build/stage.tar"),
     "shell-linux": ("ohmyzsh", "linux", "Build locked herdr, Zsh and dependencies, then stage Oh My Zsh GX",
                     "platform=ubuntu-amd64", "shell-build/stage.tar"),
 }
-SOURCE_TEST_JOBS = ("wezterm-tests", "ohmyzsh-posix")
-TARGETS = {"ubuntu-20.04": "linux", "ubuntu-24.04": "linux", "windows": "windows"}
+SOURCE_TEST_JOBS = ("ghostty-tests", "ohmyzsh-posix")
+TARGETS = {"ubuntu-24.04": "linux", "windows": "windows"}
 COVERAGE = {
     "linux": ("install", "same_version_reinstall", "reinstall_runtime", "remove", "purge",
               "user_configuration", "user_data_content_and_ownership", "witness_home_unchanged"),
@@ -308,7 +308,7 @@ def require_native_stage(key: str) -> tuple[str, str]:
 
 
 def stage_tar_layout(archive, component: str, platform: str) -> dict:
-    links = package.stage_links(platform, component, "root/" if component == "wezterm" else "payload/")
+    links = package.stage_links(platform, component, "root/" if component == package.GHOSTTY else "payload/")
     entries, folded, total, roots = {}, set(), 0, 0
     for member in archive:
         require(len(entries) < 250000, "stage tar has too many members")
@@ -375,8 +375,8 @@ def extract_stage_tar(path: Path, destination: Path, key: str) -> None:
 def verify_native_stage(stage: Path, key: str, lock_path: Path) -> dict:
     component, platform = require_native_stage(key)
     lock, checksum, _ = package.read_components_lock(lock_path)
-    if component == "wezterm":
-        info = package.check_wezterm_stage(stage, platform, lock["components"]["wezterm"]["revision"], False)
+    if component == package.GHOSTTY:
+        info = package.check_ghostty_stage(stage, platform, lock["components"][package.GHOSTTY]["revision"], False)
         manifest = stage / "stage-manifest.json"
     else:
         info = package.check_ohmyzsh_stage(stage, platform, lock["components"]["ohmyzsh"]["revision"], False,
@@ -518,7 +518,7 @@ def aggregate(input_path: Path, lock_path: Path, validator: dict, receipts: Path
             "aggregate requires original coordinator and both platforms")
     package.safe_directory(receipts)
     paths = list(receipts.rglob("validation-receipt.json"))
-    require(len(paths) == len(TARGETS), "aggregate requires all three fresh smoke receipts")
+    require(len(paths) == len(TARGETS), "aggregate requires all fresh smoke receipts")
     targets = set()
     for path in paths:
         package.safe_directory(path.parent)

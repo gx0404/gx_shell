@@ -8,7 +8,7 @@ RUN apt-get update \
         ca-certificates curl git gcc make pkg-config xz-utils \
         libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
         libffi-dev liblzma-dev uuid-dev \
-        python3 procps util-linux xvfb xauth x11-apps ffmpeg \
+        python3 procps util-linux xvfb xauth scrot libgl1-mesa-dri \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --fail --location --proto '=https' --tlsv1.2 \

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Assemble and build the GX Shell installers from the component stages.
 
-Inputs are complete stages from independently locked gx0404/wezterm and
-gx0404/ohmyzsh revisions, with gx0404/herdr provenance checked separately.
-The coordinator commit comes from this repository's HEAD. Assembly, build and
-verification are offline: they neither check out components nor resolve component-branch heads.
-Outputs are a Windows Setup EXE or Ubuntu DEB, corresponding-source archive,
-schema-2 manifest and SHA-256 sidecars.
+Inputs are complete stages from independently locked gx0404/gx_ghostty (Ghostty GX,
+schema 3 stage-manifest.json) and gx0404/ohmyzsh revisions, with gx0404/herdr
+provenance checked separately. The coordinator commit comes from this repository's
+HEAD. Assembly, build and verification are offline: they neither check out components
+nor resolve component-branch heads. Outputs are a Windows Setup EXE or Ubuntu DEB,
+corresponding-source archive, schema-3 manifest and SHA-256 sidecars.
 """
 from __future__ import annotations
 
@@ -24,19 +24,39 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "gx-shell"
+SCHEMA = 3
+GHOSTTY = "gx_ghostty"
 PLATFORMS = {
-    "windows": {"wezterm": "windows", "ohmyzsh": "windows-x64", "herdr": "windows-installer", "arch": "x64"},
-    "linux": {"wezterm": "deb", "ohmyzsh": "ubuntu-amd64", "herdr": "deb", "arch": "amd64"},
+    "windows": {GHOSTTY: "windows", "ohmyzsh": "windows-x64", "herdr": "windows-installer", "arch": "x64"},
+    "linux": {GHOSTTY: "deb", "ohmyzsh": "ubuntu-amd64", "herdr": "deb", "arch": "amd64"},
 }
 FONT_SUFFIXES = {".ttf", ".ttc"}
+FONT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]*\.(?i:ttf|ttc)")
 LINUX_FONT_DIR = "usr/share/fonts/truetype/gx-shell"
-LINUX_COMPONENT_FONT_DIRS = ("usr/share/fonts/truetype/ohmyzsh-gx", "usr/share/fonts/truetype/wezterm-gx")
+LINUX_COMPONENT_FONT_DIRS = ("usr/share/fonts/truetype/ohmyzsh-gx",)
 LINUX_ENTRY_POINTS = {
     "usr/bin/gx-zsh": "../lib/ohmyzsh-gx/bin/gx-zsh",
     "usr/bin/herdr": "../lib/ohmyzsh-gx/bin/herdr",
-    "usr/bin/wezterm-gx": "../lib/wezterm-gx/wezterm-gx",
-    "usr/bin/wezterm-gx-gui": "../lib/wezterm-gx/wezterm-gx-gui",
+    "usr/bin/ghostty-gx": "../lib/ghostty-gx/bin/ghostty",
 }
+# The Ghostty GX stage contract (scripts/gx_package.py in gx0404/gx_ghostty).
+GHOSTTY_STAGE_SCHEMA = 3
+GHOSTTY_STAGE_KEYS = {"schema", "platform", "architecture", "source_repository", "source_commit", "source_dirty",
+                      "package_version", "product_version", "zig_version", "binaries", "files"}
+GHOSTTY_TOP_LEVEL = {"windows": {"app", "fonts", "build-inputs", "stage-manifest.json"},
+                     "linux": {"root", "fonts", "stage-manifest.json"}}
+GHOSTTY_BINARIES = {"windows": ("ghostty.exe", "app/ghostty.exe"),
+                    "linux": ("ghostty", "root/usr/lib/ghostty-gx/bin/ghostty")}
+GHOSTTY_REQUIRED = {
+    "windows": ("app/ghostty.exe", "app/conpty.dll", "app/OpenConsole.exe", "app/mesa/opengl32.dll",
+                "app/mesa/libgallium_wgl.dll", "app/share/terminfo/ghostty.terminfo", "build-inputs/ghostty.ico"),
+    "linux": ("root/usr/lib/ghostty-gx/bin/ghostty", "root/usr/share/applications/com.gx0404.ghostty-gx.desktop",
+              "root/usr/share/doc/ghostty-gx/copyright"),
+}
+GHOSTTY_ICON = "build-inputs/ghostty.ico"
+SEMVER_CORE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+GHOSTTY_VERSION_STRING = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+                                    r"-gx\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 DOCUMENTS = {
     "windows": {"licenses/NotoSansCJK-OFL-1.1.txt": "packaging/licenses/NotoSansCJK-OFL-1.1.txt"},
     "linux": {"usr/share/doc/gx-shell/copyright": "packaging/debian/copyright",
@@ -49,15 +69,14 @@ REQUIRED = {
     "windows": (
         "bin/gx-zsh.exe", "bin/herdr.exe", "lib/herdr/herdr.exe", "lib/herdr/conpty/conpty.dll",
         "runtime/msys64/usr/bin/zsh.exe", "share/ohmyzsh-gx/oh-my-zsh.sh", "share/" + HERDR_COMPLETION,
-        "wezterm/wezterm.exe", "wezterm/wezterm-gui.exe", "wezterm/wezterm-gx.exe", "wezterm/wezterm-gx-cli.exe",
-        "wezterm/resources/resource-version",
+        "ghostty/ghostty.exe", "ghostty/conpty.dll", "ghostty/OpenConsole.exe", "ghostty/mesa/opengl32.dll",
+        "ghostty/mesa/libgallium_wgl.dll", "ghostty/share/terminfo/ghostty.terminfo",
     ),
     "linux": (
         "usr/lib/ohmyzsh-gx/bin/gx-zsh", "usr/lib/ohmyzsh-gx/bin/herdr", "usr/lib/ohmyzsh-gx/lib/herdr/herdr",
         "usr/lib/ohmyzsh-gx/libexec/zsh/zsh", "usr/share/ohmyzsh-gx/oh-my-zsh.sh", "usr/share/" + HERDR_COMPLETION,
-        "usr/lib/wezterm-gx/wezterm", "usr/lib/wezterm-gx/wezterm-gui", "usr/lib/wezterm-gx/wezterm-gx",
-        "usr/lib/wezterm-gx/wezterm-gx-gui", "usr/share/wezterm-gx/resource-version",
-        "usr/share/applications/org.gx0404.wezterm.desktop",
+        "usr/lib/ghostty-gx/bin/ghostty", "usr/share/applications/com.gx0404.ghostty-gx.desktop",
+        "usr/share/doc/ghostty-gx/copyright",
     ),
 }
 MAINTAINER_SCRIPTS = ("preinst", "postinst", "postrm")
@@ -232,45 +251,53 @@ def verify_inventory(root: Path, records: object, *, links: dict | None = None,
 def stage_links(platform: str, component: str, prefix: str = "") -> dict:
     if platform != "linux":
         return {}
-    names = ("wezterm-gx", "wezterm-gx-gui") if component == "wezterm" else ("gx-zsh", "herdr")
+    names = ("ghostty-gx",) if component == GHOSTTY else ("gx-zsh", "herdr")
     return {prefix + name: target for name, target in LINUX_ENTRY_POINTS.items() if PurePosixPath(name).name in names}
 
 
-def check_wezterm_origin(info: dict, platform: str, sha: str, allow_dirty: bool) -> None:
-    require(type(info.get("schema")) is int and info["schema"] == 2
-            and info.get("platform") == PLATFORMS[platform]["wezterm"],
-            f"WezTerm stage is not a schema 2 {PLATFORMS[platform]['wezterm']} stage")
-    require(info.get("source_repository") == "gx0404/wezterm", "WezTerm stage has a different repository")
-    require(info.get("source_commit") == sha, "WezTerm stage was built from a different commit")
-    require(type(info.get("source_dirty")) is bool, "WezTerm stage lacks source dirty provenance")
-    require(allow_dirty or info["source_dirty"] is False, "WezTerm stage was built from a dirty tree")
+def check_ghostty_origin(info: dict, platform: str, sha: str, allow_dirty: bool) -> None:
+    expected = PLATFORMS[platform][GHOSTTY]
+    require(type(info.get("schema")) is int and info["schema"] == GHOSTTY_STAGE_SCHEMA
+            and info.get("platform") == expected and info.get("architecture") == "amd64",
+            f"Ghostty GX stage is not a schema {GHOSTTY_STAGE_SCHEMA} {expected} amd64 stage")
+    require(info.get("source_repository") == "gx0404/gx_ghostty", "Ghostty GX stage has a different repository")
+    require(info.get("source_commit") == sha, "Ghostty GX stage was built from a different commit")
+    require(type(info.get("source_dirty")) is bool, "Ghostty GX stage lacks source dirty provenance")
+    require(allow_dirty or info["source_dirty"] is False, "Ghostty GX stage was built from a dirty tree")
+    package, product = info.get("package_version"), info.get("product_version")
+    require(all(isinstance(value, str) and SEMVER_CORE.fullmatch(value) for value in (package, info.get("zig_version"))),
+            "Ghostty GX stage package or Zig version is not X.Y.Z")
+    require(isinstance(product, str) and GHOSTTY_VERSION_STRING.fullmatch(product) is not None
+            and product.endswith(f"-gx.{package}"), "Ghostty GX stage product version is not <X.Y.Z>-gx.<package>")
 
 
-def check_wezterm_stage(stage: Path, platform: str, sha: str, allow_dirty: bool) -> dict:
+def check_ghostty_stage(stage: Path, platform: str, sha: str, allow_dirty: bool) -> dict:
     safe_directory(stage)
-    require(not is_link(stage / "stage-manifest.json"), "WezTerm manifest must not be a symlink")
+    require(not is_link(stage / "stage-manifest.json"), "Ghostty GX manifest must not be a symlink")
     info = read_json(stage / "stage-manifest.json")
-    check_wezterm_origin(info, platform, sha, allow_dirty)
-    verify_inventory(stage, info.get("files"), links=stage_links(platform, "wezterm", "root/"),
-                     exclude=("stage-manifest.json",))
-    require(isinstance(info.get("binaries"), dict) and bool(info["binaries"]), "WezTerm stage lacks binary hashes")
+    keys = GHOSTTY_STAGE_KEYS | ({"deb_depends"} if platform == "linux" else set())
+    require(set(info) == keys, "Ghostty GX stage manifest has missing or extra fields")
+    check_ghostty_origin(info, platform, sha, allow_dirty)
+    require({path.name for path in stage.iterdir()} == GHOSTTY_TOP_LEVEL[platform],
+            "Ghostty GX stage has missing or extra top-level entries")
+    links = stage_links(platform, GHOSTTY, "root/")
+    verify_inventory(stage, info.get("files"), links=links, exclude=("stage-manifest.json",))
+    for name in links:
+        require((stage / name).is_symlink(), f"Ghostty GX stage lacks the entry point {name}")
+    for name in GHOSTTY_REQUIRED[platform]:
+        require((stage / name).is_file() and not is_link(stage / name), f"Ghostty GX stage lacks {name}")
+    name, relative = GHOSTTY_BINARIES[platform]
+    require(isinstance(info.get("binaries"), dict) and set(info["binaries"]) == {name},
+            f"Ghostty GX stage must record exactly the {name} binary hash")
+    require(digest(stage / relative) == info["binaries"][name],
+            f"Ghostty GX stage binary {name} differs from its manifest SHA-256")
+    safe_directory(stage / "fonts")
+    fonts = sorted((stage / "fonts").iterdir())
+    require(bool(fonts) and all(path.is_file() and not is_link(path) and path.suffix.lower() in FONT_SUFFIXES
+                                for path in fonts), "Ghostty GX stage fonts/ must hold only font files")
     if platform == "linux":
-        require(isinstance(info.get("deb_depends"), str) and bool(info["deb_depends"].strip()),
-                "WezTerm deb stage lacks its dpkg-shlibdeps dependencies")
-        binaries = stage / "root/usr/lib/wezterm-gx"
-    else:
-        binaries = stage / "app"
-    safe_directory(binaries)
-    for name, checksum in sorted(info["binaries"].items()):
-        relative_path(name)
-        require("/" not in name, "unsafe WezTerm binary name")
-        path = binaries / name
-        require(path.is_file() and not is_link(path), f"WezTerm stage lacks the binary {name}")
-        require(digest(path) == checksum, f"WezTerm stage binary {name} differs from its manifest SHA-256")
-    inputs = ["gx-config-releases.json"] + (["terminal.ico"] if platform == "windows" else [])
-    for name in inputs:
-        require((stage / "build-inputs" / name).is_file(), f"WezTerm stage lacks build-inputs/{name}")
-    read_json(stage / "build-inputs/gx-config-releases.json")
+        require(isinstance(info.get("deb_depends"), str) and bool(info["deb_depends"].strip())
+                and "\n" not in info["deb_depends"], "Ghostty GX deb stage lacks its dpkg-shlibdeps dependencies")
     return info
 
 
@@ -433,10 +460,10 @@ def install_documents(payload: Path, platform: str) -> None:
         shutil.copyfile(ROOT / source, target)
 
 
-def component_metadata(lock: dict, wezterm: dict, ohmyzsh: dict) -> dict:
+def component_metadata(lock: dict, ghostty: dict, ohmyzsh: dict) -> dict:
     result = {name: dict(entry) for name, entry in lock["components"].items()}
-    result["wezterm"].update({key: wezterm.get(key) for key in
-                              ("package_version", "product_version", "resource_version", "binaries")})
+    result[GHOSTTY].update({key: ghostty.get(key) for key in
+                            ("package_version", "product_version", "zig_version", "binaries")})
     result["ohmyzsh"].update({"version": ohmyzsh.get("version"), "lock_digest": ohmyzsh.get("lock_digest")})
     result["herdr"].update({key: ohmyzsh["herdr_build"].get(key) for key in
                             ("version", "target", "package_manager", "source_sha256", "builder")})
@@ -445,7 +472,7 @@ def component_metadata(lock: dict, wezterm: dict, ohmyzsh: dict) -> dict:
 
 
 def verify_provenance(info: dict, lock: dict, checksum: str, sha: str, *, allow_dirty: bool) -> None:
-    require(type(info.get("schema")) is int and info["schema"] == 2, "manifest must use schema 2")
+    require(type(info.get("schema")) is int and info["schema"] == SCHEMA, f"manifest must use schema {SCHEMA}")
     require(info.get("product") == PRODUCT and info.get("platform") in PLATFORMS, "invalid product/platform")
     require(isinstance(sha, str) and re.fullmatch(r"[0-9a-fA-F]{40}", sha), "invalid coordinator commit")
     require(info.get("source_commit") == sha, "manifest source_commit differs from coordinator HEAD")
@@ -457,15 +484,15 @@ def verify_provenance(info: dict, lock: dict, checksum: str, sha: str, *, allow_
             "components lock snapshot or digest mismatch")
     require(type(info.get("source_date_epoch")) is int and info["source_date_epoch"] >= 0, "invalid source epoch")
     stages = info.get("stages")
-    require(isinstance(stages, dict) and set(stages) == {"wezterm", "ohmyzsh"}
+    require(isinstance(stages, dict) and set(stages) == {GHOSTTY, "ohmyzsh"}
             and all(isinstance(value, dict) for value in stages.values()), "missing component stage provenance")
     platform = info["platform"]
     require(info.get("architecture") == PLATFORMS[platform]["arch"], "manifest architecture mismatch")
     strict = info["publishable"] or not allow_dirty
-    check_wezterm_origin(stages["wezterm"], platform, lock["components"]["wezterm"]["revision"], not strict)
+    check_ghostty_origin(stages[GHOSTTY], platform, lock["components"][GHOSTTY]["revision"], not strict)
     check_ohmyzsh_origin(stages["ohmyzsh"], platform, lock["components"]["ohmyzsh"]["revision"],
                          lock["components"]["herdr"]["revision"], not strict)
-    require(info.get("components") == component_metadata(lock, stages["wezterm"], stages["ohmyzsh"]),
+    require(info.get("components") == component_metadata(lock, stages[GHOSTTY], stages["ohmyzsh"]),
             "component provenance differs from locked stage receipts")
     require(not info["publishable"] or not (info["source_dirty"] or info["local_build"]),
             "development build cannot be marked publishable")
@@ -486,8 +513,13 @@ def check_assembly(assembly: Path) -> dict:
     verify_inventory(payload, info.get("payload"), links=LINUX_ENTRY_POINTS if platform == "linux" else {})
     for name in REQUIRED[platform]:
         require((payload / name).is_file(), f"assembled payload lacks {name}")
+    font_dir = payload / ("fonts" if platform == "windows" else LINUX_FONT_DIR)
+    safe_directory(font_dir)
+    fonts = [{"name": path.name, "sha256": digest(path), "size": path.stat().st_size}
+             for path in sorted(font_dir.iterdir(), key=lambda item: item.name)]
+    require(bool(fonts) and info.get("fonts") == fonts, "assembly font list differs from the payload fonts")
     stage_inputs = [dict(record, path=record["path"].removeprefix("build-inputs/"))
-                    for record in info["stages"]["wezterm"]["files"] if record["path"].startswith("build-inputs/")]
+                    for record in info["stages"][GHOSTTY]["files"] if record["path"].startswith("build-inputs/")]
     stage_inputs += [dict(record, path="ohmyzsh/" + record["path"])
                      for record in info["stages"]["ohmyzsh"]["build_inputs"]]
     verify_inventory(assembly / "build-inputs", stage_inputs)
@@ -495,14 +527,14 @@ def check_assembly(assembly: Path) -> dict:
     return info
 
 
-def assemble(platform: str, wezterm_stage: Path, ohmyzsh_stage: Path, output: Path, *,
+def assemble(platform: str, ghostty_stage: Path, ohmyzsh_stage: Path, output: Path, *,
              version: str, sha: str, dirty: bool, epoch: int, allow_dirty: bool = False,
              components_lock: Path | None = None) -> dict:
     require(platform in PLATFORMS, "unsupported platform")
     require(allow_dirty or not dirty, "official packages require a clean coordinator checkout; use --allow-dirty for local builds")
     require(not output.exists() and not output.is_symlink(), f"assembly output already exists: {output}")
     lock, checksum, raw_lock = read_components_lock(components_lock)
-    wezterm = check_wezterm_stage(wezterm_stage, platform, lock["components"]["wezterm"]["revision"], allow_dirty)
+    ghostty = check_ghostty_stage(ghostty_stage, platform, lock["components"][GHOSTTY]["revision"], allow_dirty)
     ohmyzsh = check_ohmyzsh_stage(ohmyzsh_stage, platform, lock["components"]["ohmyzsh"]["revision"], allow_dirty,
                                  herdr_sha=lock["components"]["herdr"]["revision"])
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -513,34 +545,34 @@ def assemble(platform: str, wezterm_stage: Path, ohmyzsh_stage: Path, output: Pa
         if platform == "windows":
             payload = work / "payload"
             copy_tree(ohmyzsh_stage / "payload", payload, skip=("fonts",))
-            copy_tree(wezterm_stage / "app", payload / "wezterm")
-            fonts = merge_fonts([ohmyzsh_stage / "payload/fonts", wezterm_stage / "fonts"], payload / "fonts")
+            copy_tree(ghostty_stage / "app", payload / "ghostty")
+            fonts = merge_fonts([ohmyzsh_stage / "payload/fonts", ghostty_stage / "fonts"], payload / "fonts")
             install_documents(payload, platform)
             depends = None
         else:
             payload = work / "root"
             copy_tree(ohmyzsh_stage / "payload", payload, skip=("DEBIAN", *LINUX_COMPONENT_FONT_DIRS))
-            copy_tree(wezterm_stage / "root", payload, skip=("DEBIAN", *LINUX_COMPONENT_FONT_DIRS))
-            fonts = merge_fonts([ohmyzsh_stage / "payload" / LINUX_COMPONENT_FONT_DIRS[0],
-                                 wezterm_stage / "root" / LINUX_COMPONENT_FONT_DIRS[1]], payload / LINUX_FONT_DIR)
+            copy_tree(ghostty_stage / "root", payload, skip=("DEBIAN",))
+            fonts = merge_fonts([ohmyzsh_stage / "payload" / LINUX_COMPONENT_FONT_DIRS[0], ghostty_stage / "fonts"],
+                                payload / LINUX_FONT_DIR)
             install_documents(payload, platform)
             links = {path.relative_to(payload).as_posix(): os.readlink(path)
                      for path in payload.rglob("*") if path.is_symlink()}
             require(links == LINUX_ENTRY_POINTS, f"unexpected payload symlinks: {sorted(links)}")
             normalize_modes(payload)
-            depends = merge_depends(wezterm["deb_depends"], control_depends(ohmyzsh_stage))
+            depends = merge_depends(ghostty["deb_depends"], control_depends(ohmyzsh_stage))
         copy_tree(ohmyzsh_stage / "redistribution", work / "redistribution")
-        copy_tree(wezterm_stage / "build-inputs", work / "build-inputs")
+        copy_tree(ghostty_stage / "build-inputs", work / "build-inputs")
         copy_tree(ohmyzsh_stage / "build-inputs", work / "build-inputs/ohmyzsh")
         (work / "components.lock.json").write_bytes(raw_lock)
         manifest = {
-            "schema": 2, "product": PRODUCT, "version": version, "platform": platform,
+            "schema": SCHEMA, "product": PRODUCT, "version": version, "platform": platform,
             "architecture": PLATFORMS[platform]["arch"], "source_commit": sha, "source_dirty": dirty,
             "coordinator": {"repository": "gx0404/gx_shell", "revision": sha, "dirty": dirty},
             "source_date_epoch": epoch, "publishable": not (dirty or allow_dirty), "local_build": bool(allow_dirty),
             "components_lock": lock, "components_lock_digest": checksum,
-            "components": component_metadata(lock, wezterm, ohmyzsh),
-            "stages": {"wezterm": wezterm, "ohmyzsh": ohmyzsh},
+            "components": component_metadata(lock, ghostty, ohmyzsh),
+            "stages": {GHOSTTY: ghostty, "ohmyzsh": ohmyzsh},
             "fonts": fonts, "payload": inventory(payload, links=LINUX_ENTRY_POINTS if platform == "linux" else {},
                                                    executable=True),
             "inventory": inventory(work, links={"root/" + name: target for name, target in LINUX_ENTRY_POINTS.items()}
@@ -607,6 +639,14 @@ def render_control(version: str, installed_size: int, depends: str) -> str:
     return text
 
 
+def font_names(manifest: dict) -> str:
+    """The shipped font file names for the installer, which unregisters fonts it no longer ships."""
+    names = [item.get("name") if isinstance(item, dict) else None for item in manifest.get("fonts") or []]
+    require(bool(names) and all(isinstance(name, str) and FONT_NAME.fullmatch(name) for name in names)
+            and len({name.casefold() for name in names}) == len(names), "assembly lists invalid font names")
+    return "|".join(names)
+
+
 def build(assembly: Path, output: Path, *, iscc: str | None = None, dpkg_deb: str | None = None) -> dict:
     manifest = check_assembly(assembly)
     platform, version = manifest["platform"], manifest["version"]
@@ -621,7 +661,8 @@ def build(assembly: Path, output: Path, *, iscc: str | None = None, dpkg_deb: st
     if platform == "windows":
         run([tool("iscc", iscc), "/Qp", f"/DGxVersion={version}", f"/DGxPayload={(assembly / 'payload').resolve()}",
              f"/DGxOutput={output.resolve()}", f"/DGxFilename={artifact.stem}",
-             f"/DGxIcon={(assembly / 'build-inputs/terminal.ico').resolve()}", ROOT / "packaging/windows/gx-shell.iss"])
+             f"/DGxIcon={(assembly / GHOSTTY_ICON).resolve()}", f"/DGxFontNames={font_names(manifest)}",
+             ROOT / "packaging/windows/gx-shell.iss"])
     else:
         root = assembly / "root"
         control = root / "DEBIAN"
@@ -716,8 +757,9 @@ def release_notes(version: str, root: Path = ROOT) -> str:
     return (f"{match.group(1).strip()}\n\n"
             "## 安装\n\n"
             f"- Windows 10 1809+ x64：运行 `{windows}`（按用户安装，无需管理员；安装包未签名，"
-            "SmartScreen 提示时选择“仍要运行”）。会先卸载单独安装的旧版 WezTerm GX / Oh My Zsh GX / Herdr GX。\n"
-            f"- Ubuntu 20.04 / 24.04 amd64：`sudo apt install ./{deb}`（自动替换旧的 wezterm-gx、ohmyzsh-gx、herdr-gx 包）。\n\n"
+            "SmartScreen 提示时选择“仍要运行”）。会先卸载单独安装的旧版 Oh My Zsh GX / Herdr GX；"
+            "单独安装的 WezTerm GX 不受影响。\n"
+            f"- Ubuntu 24.04 及更新版本 amd64：`sudo apt install ./{deb}`（自动替换旧的 ohmyzsh-gx、herdr-gx 包）。\n\n"
             f"`SHA256SUMS` 校验全部文件；`{windows_sources}`、`{deb_sources}` 为再分发组件的对应源码。\n")
 
 
@@ -726,7 +768,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     step = commands.add_parser("assemble", help="merge the component stages into one payload")
     step.add_argument("--platform", choices=tuple(PLATFORMS), required=True)
-    step.add_argument("--wezterm-stage", type=Path, required=True)
+    step.add_argument("--ghostty-stage", type=Path, required=True,
+                      help="schema 3 Ghostty GX stage from scripts/gx_package.py of the locked gx0404/gx_ghostty")
     step.add_argument("--ohmyzsh-stage", type=Path, required=True)
     step.add_argument("--components-lock", type=Path, default=ROOT / "components.lock.json",
                       help="validated local source lock; no checkout or remote branch lookup")
@@ -758,7 +801,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "assemble":
             version = validate_version(args.version)
             sha, dirty, epoch = source_info()
-            manifest = assemble(args.platform, args.wezterm_stage.absolute(), args.ohmyzsh_stage.absolute(),
+            manifest = assemble(args.platform, args.ghostty_stage.absolute(), args.ohmyzsh_stage.absolute(),
                                 args.output.absolute(), version=version, sha=sha, dirty=dirty, epoch=epoch,
                                 allow_dirty=args.allow_dirty, components_lock=args.components_lock)
             print(f"ASSEMBLED {args.output} ({manifest['platform']}, {len(manifest['payload'])} files, GX Shell {version})")

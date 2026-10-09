@@ -16,7 +16,8 @@ import gx_shell_package as package
 import gx_shell_sources as sources
 
 SHA = "a" * 40
-HERDR_SHA, OMZ_SHA, WEZTERM_SHA = "b" * 40, "c" * 40, "d" * 40
+HERDR_SHA, OMZ_SHA, GHOSTTY_SHA = "b" * 40, "c" * 40, "d" * 40
+GHOSTTY_DEPENDS = "libc6 (>= 2.39), libgtk-4-1 (>= 4.14.0), libadwaita-1-0 (>= 1.5~beta)"
 SYMLINKS = os.name != "nt"
 REPOSITORY_ROOT = package.ROOT
 
@@ -42,7 +43,7 @@ def cleanup_temp(directory: tempfile.TemporaryDirectory) -> None:
 def write_lock(root: Path) -> Path:
     lock = {"schema": 1, "components": {
         name: {"repository": f"gx0404/{name}", "branch": sources.COMPONENT_BRANCHES[name], "revision": revision}
-        for name, revision in (("herdr", HERDR_SHA), ("ohmyzsh", OMZ_SHA), ("wezterm", WEZTERM_SHA))},
+        for name, revision in (("herdr", HERDR_SHA), ("ohmyzsh", OMZ_SHA), ("gx_ghostty", GHOSTTY_SHA))},
         "toolchains": {"fixture": "independent-repositories"}}
     path = root / "components.lock.json"
     write(path, json.dumps(lock, indent=4).encode() + b"\n")
@@ -66,9 +67,9 @@ def fixture_inventory(root: Path, exclude: str = "", executable: bool = False) -
 
 
 def refresh_stage(stage: Path, component: str) -> None:
-    name = "stage-manifest.json" if component == "wezterm" else "package-manifest.json"
+    name = "stage-manifest.json" if component == package.GHOSTTY else "package-manifest.json"
     info = package.read_json(stage / name)
-    if component == "wezterm":
+    if component == package.GHOSTTY:
         info["files"] = fixture_inventory(stage, name)
     else:
         for field, directory in (("payload", "payload"), ("redistribution", "redistribution"), ("build_inputs", "build-inputs")):
@@ -76,35 +77,37 @@ def refresh_stage(stage: Path, component: str) -> None:
     package.write_json(stage / name, info)
 
 
-def wezterm_stage(root: Path, platform: str, **overrides) -> Path:
-    stage = root / f"wezterm-{platform}"
-    info = {"schema": 2, "platform": package.PLATFORMS[platform]["wezterm"], "source_commit": WEZTERM_SHA,
-            "source_repository": "gx0404/wezterm", "source_dirty": False, "package_version": "0.4.0",
-            "product_version": "20260928-000000-dddddddd", "resource_version": "b" * 64}
-    if platform == "windows":
-        lib, suffix = stage / "app", ".exe"
-        for name in ("wezterm.exe", "wezterm-gui.exe", "wezterm-gx.exe", "wezterm-gx-cli.exe"):
-            write(lib / name, b"MZ" + name.encode())
-        write(stage / "app/resources/resource-version", b"b" * 64)
-        write(stage / "fonts/JetBrainsMono.ttf", b"shared font")
-        write(stage / "fonts/NotoSansCJK.ttc", b"cjk font")
-        write(stage / "build-inputs/terminal.ico", b"fixture-stage-icon")
+def ghostty_stage(root: Path, target: str, **overrides) -> Path:
+    """A schema 3 stage laid out like gx0404/gx_ghostty scripts/gx_package.py writes it."""
+    stage = root / f"ghostty-{target}"
+    info = {"schema": 3, "platform": package.PLATFORMS[target][package.GHOSTTY], "architecture": "amd64",
+            "source_repository": "gx0404/gx_ghostty", "source_commit": GHOSTTY_SHA, "source_dirty": False,
+            "package_version": "0.1.0", "product_version": "1.3.2-gx.0.1.0", "zig_version": "0.16.0"}
+    if target == "windows":
+        binary = stage / "app/ghostty.exe"
+        write(binary, b"MZ ghostty")
+        for name in ("conpty.dll", "OpenConsole.exe", "mesa/opengl32.dll", "mesa/libgallium_wgl.dll", "mesa/dxil.dll"):
+            write(stage / "app" / name, b"MZ " + name.encode())
+        write(stage / "app/share/terminfo/ghostty.terminfo", b"xterm-ghostty|ghostty,\n")
+        write(stage / "app/share/ghostty/themes/Builtin Dark", b"background = #000000\n")
+        write(stage / "app/licenses/Ghostty-MIT.txt", b"MIT License\n")
+        write(stage / "app/README.txt", b"Ghostty GX\r\n")
+        write(stage / "build-inputs/ghostty.ico", b"fixture-stage-icon")
+        info["binaries"] = {"ghostty.exe": package.digest(binary)}
     else:
-        info["deb_depends"] = "libc6 (>= 2.30), zsh, fontconfig"
-        lib, suffix = stage / "root/usr/lib/wezterm-gx", ""
-        for name in ("wezterm", "wezterm-gui", "wezterm-gx", "wezterm-gx-gui"):
-            write(lib / name, b"\x7fELF" + name.encode(), executable=True)
-        write(stage / "root/usr/share/wezterm-gx/resource-version", b"b" * 64)
-        write(stage / "root/usr/share/wezterm-gx/dotfiles/wezterm-config/LICENSE", b"MIT License\n")
-        write(stage / "root/usr/share/doc/wezterm-gx/copyright", b"MIT License\n")
-        write(stage / "root/usr/share/applications/org.gx0404.wezterm.desktop", b"[Desktop Entry]\n")
-        write(stage / "root/usr/share/fonts/truetype/wezterm-gx/JetBrainsMono.ttf", b"shared font")
-        write(stage / "root/usr/share/fonts/truetype/wezterm-gx/NotoSansCJK.ttc", b"cjk font")
+        binary = stage / "root/usr/lib/ghostty-gx/bin/ghostty"
+        write(binary, b"\x7fELF ghostty", executable=True)
+        write(stage / "root/usr/lib/ghostty-gx/share/terminfo/g/ghostty", b"compiled terminfo")
+        write(stage / "root/usr/lib/ghostty-gx/share/ghostty/themes/Builtin Dark", b"background = #000000\n")
+        write(stage / "root/usr/share/applications/com.gx0404.ghostty-gx.desktop", b"[Desktop Entry]\n")
+        write(stage / "root/usr/share/icons/hicolor/16x16/apps/com.gx0404.ghostty-gx.png", b"png")
+        write(stage / "root/usr/share/doc/ghostty-gx/copyright", b"MIT License\n")
         (stage / "root/usr/bin").mkdir(parents=True)
-        for name in ("wezterm-gx", "wezterm-gx-gui"):
-            os.symlink(f"../lib/wezterm-gx/{name}", stage / "root/usr/bin" / name)
-    write(stage / "build-inputs/gx-config-releases.json", b'{"schema": 1, "releases": {}}\n')
-    info["binaries"] = {name + suffix: package.digest(lib / (name + suffix)) for name in ("wezterm", "wezterm-gui")}
+        os.symlink("../lib/ghostty-gx/bin/ghostty", stage / "root/usr/bin/ghostty-gx")
+        info["binaries"] = {"ghostty": package.digest(binary)}
+        info["deb_depends"] = GHOSTTY_DEPENDS
+    write(stage / "fonts/JetBrainsMono.ttf", b"shared font")
+    write(stage / "fonts/NotoSansCJK.ttc", b"cjk font")
     info["files"] = fixture_inventory(stage)
     info.update(overrides)
     package.write_json(stage / "stage-manifest.json", info)
@@ -256,11 +259,11 @@ class AssemblyTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def assemble(self, platform, wezterm, ohmyzsh, **kwargs):
+    def assemble(self, platform, ghostty, ohmyzsh, **kwargs):
         options = {"version": "0.1.0", "sha": SHA, "dirty": False, "epoch": 1700000000,
                    "components_lock": self.lock}
         options.update(kwargs)
-        return package.assemble(platform, wezterm, ohmyzsh, self.root / "out", **options)
+        return package.assemble(platform, ghostty, ohmyzsh, self.root / "out", **options)
 
     def test_version_is_the_numeric_maximum_and_accepts_the_release_tag(self):
         (self.root / "CHANGELOG.md").write_text("## 0.9.0(2026-01-01)\n## 0.10.0(TBD)\n", encoding="utf-8")
@@ -294,12 +297,13 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn("0.1.0 as (TBD)", stderr.getvalue())
 
     def test_windows_layout_merges_components_and_deduplicates_fonts(self):
-        manifest = self.assemble("windows", wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
+        manifest = self.assemble("windows", ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
         payload = self.root / "out/payload"
         for name in package.REQUIRED["windows"]:
             self.assertTrue((payload / name).is_file(), name)
         self.assertEqual(sorted(p.name for p in (payload / "fonts").iterdir()), ["JetBrainsMono.ttf", "NotoSansCJK.ttc"])
-        self.assertFalse((payload / "wezterm/fonts").exists())
+        self.assertFalse((payload / "ghostty/fonts").exists())
+        self.assertEqual((payload / "ghostty/share/ghostty/themes/Builtin Dark").read_bytes(), b"background = #000000\n")
         self.assertTrue((self.root / "out/redistribution/dependencies/zsh/SOURCE.txt").is_file())
         self.assertTrue(manifest["publishable"])
         self.assertEqual(manifest["components"]["herdr"]["package_manager"], "windows-installer")
@@ -308,7 +312,7 @@ class AssemblyTests(unittest.TestCase):
 
     def test_same_font_name_with_different_content_is_rejected(self):
         with self.assertRaisesRegex(package.PackageError, "different fonts"):
-            self.assemble("windows", wezterm_stage(self.root, "windows"),
+            self.assemble("windows", ghostty_stage(self.root, "windows"),
                           ohmyzsh_stage(self.root, "windows", font=b"another build"))
         self.assertFalse((self.root / "out").exists())
 
@@ -317,7 +321,14 @@ class AssemblyTests(unittest.TestCase):
             ({"source_commit": SHA}, {}, "different commit"),
             ({"source_repository": "gx0404/gx_shell"}, {}, "different repository"),
             ({"source_dirty": True}, {}, "dirty"),
-            ({"schema": 1}, {}, "schema 2"),
+            ({"schema": 2}, {}, "schema 3"),
+            ({"schema": True}, {}, "schema 3"),
+            ({"platform": "deb"}, {}, "schema 3 windows"),
+            ({"architecture": "arm64"}, {}, "amd64 stage"),
+            ({"package_version": "0.1"}, {}, "package or Zig version"),
+            ({"zig_version": "0.16"}, {}, "package or Zig version"),
+            ({"product_version": "1.3.2-gx.9.9.9"}, {}, "product version"),
+            ({"product_version": "1.3.2"}, {}, "product version"),
             ({}, {"source": {"revision": SHA}}, "different commit"),
             ({}, {"source": {"repository": "gx0404/gx_shell"}}, "different repository"),
             ({}, {"publishable": False}, "development"),
@@ -336,30 +347,30 @@ class AssemblyTests(unittest.TestCase):
             ({}, {"herdr_build": {"builder": None}}, "not built on GitHub Actions"),
             ({}, {"herdr_build": {"builder": "self-hosted"}}, "not built on GitHub Actions"),
         )
-        for index, (wezterm_change, ohmyzsh_change, message) in enumerate(cases):
+        for index, (ghostty_change, ohmyzsh_change, message) in enumerate(cases):
             with self.subTest(message=message):
                 root = self.root / str(index)
                 root.mkdir()
-                wezterm = wezterm_stage(root, "windows", **wezterm_change)
+                ghostty = ghostty_stage(root, "windows", **ghostty_change)
                 ohmyzsh = ohmyzsh_stage(root, "windows", **ohmyzsh_change)
                 with self.assertRaisesRegex(package.PackageError, message):
-                    package.assemble("windows", wezterm, ohmyzsh, root / "out", version="0.1.0", sha=SHA,
+                    package.assemble("windows", ghostty, ohmyzsh, root / "out", version="0.1.0", sha=SHA,
                                      dirty=False, epoch=0)
 
     def test_dirty_checkout_requires_explicit_development_mode(self):
-        wezterm, ohmyzsh = wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
+        ghostty, ohmyzsh = ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
         with self.assertRaisesRegex(package.PackageError, "clean coordinator"):
-            self.assemble("windows", wezterm, ohmyzsh, dirty=True)
-        manifest = self.assemble("windows", wezterm, ohmyzsh, dirty=True, allow_dirty=True)
+            self.assemble("windows", ghostty, ohmyzsh, dirty=True)
+        manifest = self.assemble("windows", ghostty, ohmyzsh, dirty=True, allow_dirty=True)
         self.assertFalse(manifest["publishable"])
 
     def test_locally_built_herdr_needs_allow_dirty_and_is_never_publishable(self):
         build = {"builder": "local"}
-        wezterm = wezterm_stage(self.root, "windows")
+        ghostty = ghostty_stage(self.root, "windows")
         ohmyzsh = ohmyzsh_stage(self.root, "windows", publishable=False, herdr_build=build)
         with self.assertRaisesRegex(package.PackageError, "not built on GitHub Actions .*--allow-dirty"):
-            self.assemble("windows", wezterm, ohmyzsh)
-        manifest = self.assemble("windows", wezterm, ohmyzsh, allow_dirty=True)
+            self.assemble("windows", ghostty, ohmyzsh)
+        manifest = self.assemble("windows", ghostty, ohmyzsh, allow_dirty=True)
         self.assertFalse(manifest["publishable"])
         self.assertEqual(manifest["components"]["herdr"]["builder"], "local")
 
@@ -371,14 +382,14 @@ class AssemblyTests(unittest.TestCase):
             options = dict(str(item)[2:].split("=", 1) for item in argv if str(item).startswith("/DGx"))
             write(Path(options["GxOutput"]) / f"{options['GxFilename']}.exe", b"MZ fixture installer")
 
-        wezterm, ohmyzsh = wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
+        ghostty, ohmyzsh = ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
         for label, options, names in (
                 ("release", {}, ["GX-Shell-0.1.0-Setup-x64.exe", "gx-shell_0.1.0_windows-x64-sources.tar.xz"]),
                 ("local", {"dirty": True, "allow_dirty": True},
                  ["GX-Shell-0.1.0-local-Setup-x64.exe", "gx-shell_0.1.0-local_windows-x64-sources.tar.xz"])):
             with self.subTest(label):
                 assembly = self.root / f"assembly-{label}"
-                package.assemble("windows", wezterm, ohmyzsh, assembly, version="0.1.0", sha=SHA, epoch=1700000000,
+                package.assemble("windows", ghostty, ohmyzsh, assembly, version="0.1.0", sha=SHA, epoch=1700000000,
                                  **{"dirty": False, **options})
                 with mock.patch.object(package, "run", side_effect=iscc), mock.patch.object(package, "tool", return_value="ISCC.exe"):
                     result = package.build(assembly, self.root / f"dist-{label}")
@@ -390,13 +401,13 @@ class AssemblyTests(unittest.TestCase):
 
     def test_two_components_cannot_provide_the_same_path(self):
         ohmyzsh = ohmyzsh_stage(self.root, "windows")
-        write(ohmyzsh / "payload/wezterm/wezterm-gx.exe", b"foreign")
+        write(ohmyzsh / "payload/ghostty/ghostty.exe", b"foreign")
         refresh_stage(ohmyzsh, "ohmyzsh")
-        with self.assertRaisesRegex(package.PackageError, "same path: .*/payload/wezterm/wezterm-gx.exe"):
-            self.assemble("windows", wezterm_stage(self.root, "windows"), ohmyzsh)
+        with self.assertRaisesRegex(package.PackageError, "same path: .*/payload/ghostty/ghostty.exe"):
+            self.assemble("windows", ghostty_stage(self.root, "windows"), ohmyzsh)
 
     def test_windows_layout_adds_the_noto_license_without_overwriting_component_files(self):
-        self.assemble("windows", wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
+        self.assemble("windows", ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
         licenses = self.root / "out/payload/licenses"
         self.assertEqual(sorted(p.name for p in licenses.iterdir()), ["NotoSansCJK-OFL-1.1.txt", "ohmyzsh-LICENSE.txt"])
         text = (licenses / "NotoSansCJK-OFL-1.1.txt").read_bytes()
@@ -407,38 +418,79 @@ class AssemblyTests(unittest.TestCase):
         write(ohmyzsh / "payload/licenses/NotoSansCJK-OFL-1.1.txt", b"foreign")
         refresh_stage(ohmyzsh, "ohmyzsh")
         with self.assertRaisesRegex(package.PackageError, "already provides licenses/NotoSansCJK-OFL-1.1.txt"):
-            package.assemble("windows", wezterm_stage(root, "windows"), ohmyzsh, root / "out", version="0.1.0",
+            package.assemble("windows", ghostty_stage(root, "windows"), ohmyzsh, root / "out", version="0.1.0",
                              sha=SHA, dirty=False, epoch=0)
 
-    def test_wezterm_stage_binaries_must_match_their_manifest_hashes(self):
+    def test_ghostty_stage_binary_must_match_its_manifest_hash(self):
         for platform in ("windows", "linux") if SYMLINKS else ("windows",):
             with self.subTest(platform=platform):
-                stage = wezterm_stage(self.root / platform, platform)
-                binary = stage / ("app/wezterm-gui.exe" if platform == "windows" else "root/usr/lib/wezterm-gx/wezterm-gui")
-                info = package.check_wezterm_stage(stage, platform, WEZTERM_SHA, False)
+                stage = ghostty_stage(self.root / platform, platform)
+                binary = stage / ("app/ghostty.exe" if platform == "windows" else "root/usr/lib/ghostty-gx/bin/ghostty")
+                info = package.check_ghostty_stage(stage, platform, GHOSTTY_SHA, False)
                 self.assertEqual(info["binaries"][binary.name], package.digest(binary))
                 binary.write_bytes(b"tampered")
                 with self.assertRaisesRegex(package.PackageError, "inventory mismatch"):
-                    package.check_wezterm_stage(stage, platform, WEZTERM_SHA, False)
-                refresh_stage(stage, "wezterm")
+                    package.check_ghostty_stage(stage, platform, GHOSTTY_SHA, False)
+                refresh_stage(stage, package.GHOSTTY)
                 with self.assertRaisesRegex(package.PackageError, "differs from its manifest"):
-                    package.check_wezterm_stage(stage, platform, WEZTERM_SHA, False)
+                    package.check_ghostty_stage(stage, platform, GHOSTTY_SHA, False)
                 binary.unlink()
-                with self.assertRaisesRegex(package.PackageError, "inventory mismatch"):
-                    package.check_wezterm_stage(stage, platform, WEZTERM_SHA, False)
-                escape = binary.parent.parent / "escape"
-                write(escape, b"outside the payload")
-                info["binaries"] = {"../escape": package.digest(escape)}
+                # On Linux the missing binary also leaves usr/bin/ghostty-gx dangling, which is checked first.
+                with self.assertRaisesRegex(package.PackageError, "inventory mismatch|dangling payload symlink"):
+                    package.check_ghostty_stage(stage, platform, GHOSTTY_SHA, False)
+                write(binary, b"restored")
+                info["binaries"] = {"../escape": package.digest(binary)}
                 package.write_json(stage / "stage-manifest.json", info)
-                refresh_stage(stage, "wezterm")
-                with self.assertRaisesRegex(package.PackageError, "unsafe inventory path"):
-                    package.check_wezterm_stage(stage, platform, WEZTERM_SHA, False)
+                refresh_stage(stage, package.GHOSTTY)
+                with self.assertRaisesRegex(package.PackageError, "exactly the ghostty"):
+                    package.check_ghostty_stage(stage, platform, GHOSTTY_SHA, False)
+
+    def test_ghostty_stage_manifest_fields_and_top_level_follow_the_schema_3_contract(self):
+        cases = (
+            ("extra field", lambda stage, info: info.update(resource_version="b" * 64), "missing or extra fields"),
+            ("missing field", lambda stage, info: info.pop("zig_version"), "missing or extra fields"),
+            ("windows deb_depends", lambda stage, info: info.update(deb_depends="libc6"), "missing or extra fields"),
+            ("extra top level", lambda stage, info: write(stage / "notes/readme.txt"), "top-level"),
+            ("missing build input", lambda stage, info: (stage / "build-inputs/ghostty.ico").unlink(), "lacks build-inputs"),
+            ("missing mesa", lambda stage, info: (stage / "app/mesa/opengl32.dll").unlink(), "lacks app/mesa/opengl32.dll"),
+            ("non-font file", lambda stage, info: write(stage / "fonts/readme.txt"), "only font files"),
+        )
+        for index, (label, change, message) in enumerate(cases):
+            with self.subTest(case=label):
+                stage = ghostty_stage(self.root / str(index), "windows")
+                info = package.read_json(stage / "stage-manifest.json")
+                change(stage, info)
+                package.write_json(stage / "stage-manifest.json", info)
+                refresh_stage(stage, package.GHOSTTY)
+                with self.assertRaisesRegex(package.PackageError, message):
+                    package.check_ghostty_stage(stage, "windows", GHOSTTY_SHA, False)
+
+    @unittest.skipUnless(SYMLINKS, "deb stage fixtures need POSIX symlinks")
+    def test_ghostty_deb_stage_needs_its_entry_point_and_dependencies(self):
+        cases = (
+            ("missing entry point", lambda stage, info: (stage / "root/usr/bin/ghostty-gx").unlink(), "entry point"),
+            ("multiline depends", lambda stage, info: info.update(deb_depends="libc6\nlibgtk-4-1"), "dpkg-shlibdeps"),
+            ("empty depends", lambda stage, info: info.update(deb_depends=" "), "dpkg-shlibdeps"),
+            ("missing depends", lambda stage, info: info.pop("deb_depends"), "missing or extra fields"),
+            ("missing desktop file", lambda stage, info: (stage / "root/usr/share/applications/com.gx0404.ghostty-gx.desktop").unlink(),
+             "lacks root/usr/share/applications"),
+        )
+        for index, (label, change, message) in enumerate(cases):
+            with self.subTest(case=label):
+                stage = ghostty_stage(self.root / str(index), "linux")
+                info = package.read_json(stage / "stage-manifest.json")
+                change(stage, info)
+                package.write_json(stage / "stage-manifest.json", info)
+                refresh_stage(stage, package.GHOSTTY)
+                with self.assertRaisesRegex(package.PackageError, message):
+                    package.check_ghostty_stage(stage, "linux", GHOSTTY_SHA, False)
 
     @unittest.skipUnless(SYMLINKS, "deb payload fixtures need POSIX symlinks")
     def test_linux_layout_merges_depends_fonts_and_entry_points(self):
-        manifest = self.assemble("linux", wezterm_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
+        manifest = self.assemble("linux", ghostty_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
         root = self.root / "out/root"
-        self.assertEqual(manifest["deb_depends"], "fontconfig, git, libc6 (>= 2.30), zsh")
+        self.assertEqual(manifest["deb_depends"],
+                         "fontconfig, git, libadwaita-1-0 (>= 1.5~beta), libc6 (>= 2.39), libgtk-4-1 (>= 4.14.0)")
         fonts = root / package.LINUX_FONT_DIR
         self.assertEqual(sorted(p.name for p in fonts.iterdir()), ["JetBrainsMono.ttf", "NotoSansCJK.ttc"])
         for directory in package.LINUX_COMPONENT_FONT_DIRS:
@@ -446,13 +498,14 @@ class AssemblyTests(unittest.TestCase):
         self.assertFalse((root / "DEBIAN").exists())
         for link, target in package.LINUX_ENTRY_POINTS.items():
             self.assertEqual(os.readlink(root / link), target)
-        self.assertEqual((root / "usr/lib/wezterm-gx/wezterm-gui").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((root / "usr/lib/ghostty-gx/bin/ghostty").stat().st_mode & 0o777, 0o755)
+        self.assertTrue((root / "usr/share/applications/com.gx0404.ghostty-gx.desktop").is_file())
         self.assertEqual((root / "usr/share/ohmyzsh-gx/oh-my-zsh.sh").stat().st_mode & 0o777, 0o644)
         self.assertTrue((root / "usr/share/doc/gx-shell/copyright").is_file())
 
     @unittest.skipUnless(SYMLINKS, "deb payload fixtures need POSIX symlinks")
     def test_linux_copyright_cites_only_installed_paths_including_the_noto_license(self):
-        self.assemble("linux", wezterm_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
+        self.assemble("linux", ghostty_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
         root = self.root / "out/root"
         noto = root / "usr/share/doc/gx-shell/NotoSansCJK-OFL-1.1.txt"
         self.assertEqual(noto.read_bytes(), (package.ROOT / "packaging/licenses/NotoSansCJK-OFL-1.1.txt").read_bytes())
@@ -466,28 +519,30 @@ class AssemblyTests(unittest.TestCase):
 
     @unittest.skipUnless(SYMLINKS, "deb payload fixtures need POSIX symlinks")
     def test_linux_payload_rejects_unexpected_symlinks(self):
-        wezterm = wezterm_stage(self.root, "linux")
-        os.symlink("/etc/passwd", wezterm / "root/usr/share/wezterm-gx/escape")
+        ghostty = ghostty_stage(self.root, "linux")
+        os.symlink("/etc/passwd", ghostty / "root/usr/lib/ghostty-gx/share/escape")
         with self.assertRaisesRegex(package.PackageError, "unexpected payload symlinks"):
-            self.assemble("linux", wezterm, ohmyzsh_stage(self.root, "linux"))
+            self.assemble("linux", ghostty, ohmyzsh_stage(self.root, "linux"))
 
     @unittest.skipUnless(SYMLINKS and shutil.which("dpkg-deb"), "needs dpkg-deb and POSIX symlinks")
     def test_real_deb_build_carries_control_and_maintainer_scripts(self):
-        self.assemble("linux", wezterm_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
+        self.assemble("linux", ghostty_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
         result = package.build(self.root / "out", self.root / "dist")
         deb = self.root / "dist/gx-shell_0.1.0_amd64.deb"
         self.assertIn(deb.name, result["artifacts"])
         info = package.subprocess.run(["dpkg-deb", "--info", str(deb)], check=True, capture_output=True, text=True).stdout
-        for text in ("Package: gx-shell", "Replaces: herdr-gx, ohmyzsh-gx, wezterm-gx", " preinst", " postinst", " postrm"):
+        for text in ("Package: gx-shell", "Replaces: herdr-gx, ohmyzsh-gx\n", " preinst", " postinst", " postrm"):
             self.assertIn(text, info)
+        self.assertNotIn("wezterm", info)
         self.assertFalse((self.root / "out/root/DEBIAN").exists())
         contents = package.subprocess.run(["dpkg-deb", "--contents", str(deb)], check=True, capture_output=True, text=True).stdout
         self.assertIn("./usr/bin/gx-zsh -> ../lib/ohmyzsh-gx/bin/gx-zsh", contents)
+        self.assertIn("./usr/bin/ghostty-gx -> ../lib/ghostty-gx/bin/ghostty", contents)
         self.assertIn("root/root", contents)
 
     @unittest.skipUnless(SYMLINKS and shutil.which("dpkg-deb"), "needs dpkg-deb and POSIX symlinks")
     def test_real_deb_build_is_reproducible_from_the_manifest_epoch(self):
-        self.assemble("linux", wezterm_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
+        self.assemble("linux", ghostty_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux"))
         package.build(self.root / "out", self.root / "one")
         for path in (self.root / "out/root").rglob("*"):
             os.utime(path, (1750000000, 1750000000), follow_symlinks=False)
@@ -503,7 +558,10 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn("Version: 1.2.3\n", text)
         self.assertIn("Installed-Size: 42\n", text)
         self.assertIn("Depends: libc6 (>= 2.29), zsh\n", text)
-        self.assertIn("Conflicts: herdr, herdr-gx, ohmyzsh-gx, wezterm-gx\n", text)
+        self.assertIn("Conflicts: herdr, herdr-gx, ohmyzsh-gx\n", text)
+        self.assertIn("Replaces: herdr-gx, ohmyzsh-gx\n", text)
+        self.assertNotIn("wezterm", text.lower())
+        self.assertIn("Ghostty GX", text)
 
     def test_release_notes_use_the_changelog_section_and_list_the_assets(self):
         (self.root / "CHANGELOG.md").write_text("# log\n\n## 0.2.0(TBD)\n\n- newer\n\n## 0.1.0(2026-09-28)\n\n- first\n",
@@ -511,8 +569,11 @@ class AssemblyTests(unittest.TestCase):
         notes = package.release_notes("0.1.0", self.root)
         self.assertTrue(notes.startswith("- first\n"))
         self.assertNotIn("newer", notes)
-        for name in ("GX-Shell-0.1.0-Setup-x64.exe", "gx-shell_0.1.0_amd64.deb", "SHA256SUMS"):
+        for name in ("GX-Shell-0.1.0-Setup-x64.exe", "gx-shell_0.1.0_amd64.deb", "SHA256SUMS",
+                     "Ubuntu 24.04", "WezTerm GX 不受影响"):
             self.assertIn(name, notes)
+        for stale in ("20.04", "wezterm-gx"):
+            self.assertNotIn(stale, notes)
         with self.assertRaisesRegex(package.PackageError, "no entries for 0.3.0"):
             package.release_notes("0.3.0", self.root)
 
@@ -543,28 +604,29 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual({(m.uid, m.gid) for m in members}, {(0, 0)})
 
     def test_assembly_preserves_four_sources_raw_lock_and_stage_build_inputs_offline(self):
-        wezterm, ohmyzsh = wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
+        ghostty, ohmyzsh = ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
         with mock.patch.object(package, "git", side_effect=AssertionError("offline assembly must not inspect Git")):
-            manifest = self.assemble("windows", wezterm, ohmyzsh)
-        self.assertEqual(manifest["schema"], 2)
+            manifest = self.assemble("windows", ghostty, ohmyzsh)
+        self.assertEqual(manifest["schema"], 3)
         self.assertEqual(manifest["coordinator"]["revision"], SHA)
         self.assertEqual(manifest["components_lock"], package.read_json(self.lock))
         self.assertEqual(manifest["components_lock_digest"], package.digest(self.lock))
         self.assertEqual((self.root / "out/components.lock.json").read_bytes(), self.lock.read_bytes())
-        for name, revision in (("herdr", HERDR_SHA), ("ohmyzsh", OMZ_SHA), ("wezterm", WEZTERM_SHA)):
+        for name, revision in (("herdr", HERDR_SHA), ("ohmyzsh", OMZ_SHA), ("gx_ghostty", GHOSTTY_SHA)):
             self.assertEqual(manifest["components"][name]["revision"], revision)
             self.assertEqual(manifest["components"][name]["repository"], f"gx0404/{name}")
             self.assertFalse((self.coordinator / name).exists())
         paths = {item["path"] for item in manifest["inventory"]}
-        self.assertTrue({"components.lock.json", "build-inputs/terminal.ico", "build-inputs/gx-config-releases.json",
-                         "build-inputs/ohmyzsh/windows.iss"} <= paths)
-        self.assertEqual((self.root / "out/build-inputs/terminal.ico").read_bytes(), b"fixture-stage-icon")
+        self.assertTrue({"components.lock.json", "build-inputs/ghostty.ico", "build-inputs/ohmyzsh/windows.iss"} <= paths)
+        self.assertEqual((self.root / "out/build-inputs/ghostty.ico").read_bytes(), b"fixture-stage-icon")
+        self.assertEqual(manifest["components"]["gx_ghostty"]["product_version"], "1.3.2-gx.0.1.0")
+        self.assertEqual(manifest["components"]["gx_ghostty"]["zig_version"], "0.16.0")
 
     def test_full_stage_inventories_reject_missing_extra_and_changed_nonbinary_files(self):
         targets = (
-            ("wezterm", "app/resources/resource-version"), ("wezterm", "app/wezterm-gx.exe"),
-            ("wezterm", "fonts/JetBrainsMono.ttf"), ("wezterm", "build-inputs/terminal.ico"),
-            ("wezterm", "build-inputs/gx-config-releases.json"),
+            ("gx_ghostty", "app/share/terminfo/ghostty.terminfo"), ("gx_ghostty", "app/conpty.dll"),
+            ("gx_ghostty", "app/share/ghostty/themes/Builtin Dark"),
+            ("gx_ghostty", "fonts/JetBrainsMono.ttf"), ("gx_ghostty", "build-inputs/ghostty.ico"),
             ("ohmyzsh", "payload/share/ohmyzsh-gx/oh-my-zsh.sh"),
             ("ohmyzsh", "redistribution/dependencies/zsh/SOURCE.txt"),
             ("ohmyzsh", "build-inputs/windows.iss"))
@@ -572,8 +634,8 @@ class AssemblyTests(unittest.TestCase):
             for change in ("missing", "extra", "changed"):
                 with self.subTest(component=component, relative=relative, change=change):
                     root = self.root / f"{index}-{change}"
-                    wezterm, ohmyzsh = wezterm_stage(root, "windows"), ohmyzsh_stage(root, "windows")
-                    target = (wezterm if component == "wezterm" else ohmyzsh) / relative
+                    ghostty, ohmyzsh = ghostty_stage(root, "windows"), ohmyzsh_stage(root, "windows")
+                    target = (ghostty if component == "gx_ghostty" else ohmyzsh) / relative
                     if change == "missing":
                         target.unlink()
                     elif change == "extra":
@@ -581,28 +643,28 @@ class AssemblyTests(unittest.TestCase):
                     else:
                         target.write_bytes(b"tampered")
                     with self.assertRaisesRegex(package.PackageError, "inventory mismatch"):
-                        self.assemble("windows", wezterm, ohmyzsh)
+                        self.assemble("windows", ghostty, ohmyzsh)
                     self.assertFalse((self.root / "out").exists())
 
     def test_inventory_paths_duplicates_sizes_and_hashes_are_strict(self):
         invalid = ("../escape", "/absolute", "C:/escape", "app/../escape", "app//escape",
                    "app/./escape", "app\\escape", "app/escape.", "app/NUL", "")
-        for component in ("wezterm", "ohmyzsh"):
+        for component in ("gx_ghostty", "ohmyzsh"):
             for index, name in enumerate(invalid):
                 with self.subTest(component=component, name=name):
                     root = self.root / f"{component}-{index}"
-                    wezterm, ohmyzsh = wezterm_stage(root, "windows"), ohmyzsh_stage(root, "windows")
-                    path = wezterm / "stage-manifest.json" if component == "wezterm" else ohmyzsh / "package-manifest.json"
+                    ghostty, ohmyzsh = ghostty_stage(root, "windows"), ohmyzsh_stage(root, "windows")
+                    path = ghostty / "stage-manifest.json" if component == "gx_ghostty" else ohmyzsh / "package-manifest.json"
                     info = package.read_json(path)
-                    field = "files" if component == "wezterm" else "payload"
+                    field = "files" if component == "gx_ghostty" else "payload"
                     info[field][0]["path"] = name
                     package.write_json(path, info)
                     with self.assertRaises(package.PackageError):
-                        self.assemble("windows", wezterm, ohmyzsh)
+                        self.assemble("windows", ghostty, ohmyzsh)
         for index, change in enumerate(("duplicate", "size", "sha256", "self", "empty")):
             root = self.root / f"record-{index}"
-            wezterm, ohmyzsh = wezterm_stage(root, "windows"), ohmyzsh_stage(root, "windows")
-            info = package.read_json(wezterm / "stage-manifest.json")
+            ghostty, ohmyzsh = ghostty_stage(root, "windows"), ohmyzsh_stage(root, "windows")
+            info = package.read_json(ghostty / "stage-manifest.json")
             if change == "duplicate":
                 info["files"].append(dict(info["files"][0]))
             elif change == "self":
@@ -611,30 +673,31 @@ class AssemblyTests(unittest.TestCase):
                 info["files"] = []
             else:
                 info["files"][0][change] = True
-            package.write_json(wezterm / "stage-manifest.json", info)
+            package.write_json(ghostty / "stage-manifest.json", info)
             with self.subTest(change=change), self.assertRaises(package.PackageError):
-                self.assemble("windows", wezterm, ohmyzsh)
+                self.assemble("windows", ghostty, ohmyzsh)
 
     def test_required_build_inputs_and_herdr_source_cannot_be_removed_with_inventory(self):
-        for index, relative in enumerate(("build-inputs/terminal.ico", "build-inputs/gx-config-releases.json")):
+        for index, relative in enumerate(("build-inputs/ghostty.ico",)):
             root = self.root / str(index)
-            wezterm, ohmyzsh = wezterm_stage(root, "windows"), ohmyzsh_stage(root, "windows")
-            (wezterm / relative).unlink()
-            refresh_stage(wezterm, "wezterm")
+            ghostty, ohmyzsh = ghostty_stage(root, "windows"), ohmyzsh_stage(root, "windows")
+            (ghostty / relative).unlink()
+            refresh_stage(ghostty, package.GHOSTTY)
             with self.assertRaisesRegex(package.PackageError, "lacks build-inputs"):
-                self.assemble("windows", wezterm, ohmyzsh)
+                self.assemble("windows", ghostty, ohmyzsh)
         root = self.root / "source"
-        wezterm, ohmyzsh = wezterm_stage(root, "windows"), ohmyzsh_stage(root, "windows")
+        ghostty, ohmyzsh = ghostty_stage(root, "windows"), ohmyzsh_stage(root, "windows")
         (ohmyzsh / "redistribution/dependencies/herdr/redistribution/herdr-source.zip").unlink()
         refresh_stage(ohmyzsh, "ohmyzsh")
         with self.assertRaisesRegex(package.PackageError, "no corresponding redistribution file"):
-            self.assemble("windows", wezterm, ohmyzsh)
+            self.assemble("windows", ghostty, ohmyzsh)
 
     def test_build_rechecks_every_assembly_input_before_invoking_a_packager(self):
-        self.assemble("windows", wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
+        self.assemble("windows", ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
         assembly = self.root / "out"
-        for name in ("payload/bin/gx-zsh.exe", "build-inputs/terminal.ico", "build-inputs/gx-config-releases.json",
-                     "build-inputs/ohmyzsh/windows.iss", "redistribution/dependencies/zsh/SOURCE.txt", "components.lock.json"):
+        for name in ("payload/bin/gx-zsh.exe", "payload/ghostty/ghostty.exe", "payload/fonts/JetBrainsMono.ttf",
+                     "build-inputs/ghostty.ico", "build-inputs/ohmyzsh/windows.iss",
+                     "redistribution/dependencies/zsh/SOURCE.txt", "components.lock.json"):
             path = assembly / name
             before = path.read_bytes()
             path.write_bytes(before + b"tampered")
@@ -649,9 +712,9 @@ class AssemblyTests(unittest.TestCase):
         self.assertFalse((self.root / "dist").exists())
 
     def test_stage_input_receipts_prevent_rehashing_tampered_assembly_icon(self):
-        self.assemble("windows", wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
+        self.assemble("windows", ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
         assembly = self.root / "out"
-        write(assembly / "build-inputs/terminal.ico", b"different icon")
+        write(assembly / "build-inputs/ghostty.ico", b"different icon")
         manifest = package.read_json(assembly / "assembly-manifest.json")
         manifest["inventory"] = fixture_inventory(assembly, "assembly-manifest.json", executable=True)
         package.write_json(assembly / "assembly-manifest.json", manifest)
@@ -659,16 +722,17 @@ class AssemblyTests(unittest.TestCase):
             package.build(assembly, self.root / "dist")
 
     def test_build_uses_staged_icon_with_no_component_checkout(self):
-        self.assemble("windows", wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
+        self.assemble("windows", ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows"))
         assembly = self.root / "out"
-        shutil.rmtree(self.root / "wezterm-windows")
+        shutil.rmtree(self.root / "ghostty-windows")
         shutil.rmtree(self.root / "ohmyzsh-windows")
         self.lock.unlink()
 
         def iscc(argv, env=None):
             options = dict(str(item)[2:].split("=", 1) for item in argv if str(item).startswith("/DGx"))
-            self.assertTrue(os.path.samefile(Path(options["GxIcon"]), assembly / "build-inputs/terminal.ico"))
+            self.assertTrue(os.path.samefile(Path(options["GxIcon"]), assembly / "build-inputs/ghostty.ico"))
             self.assertEqual(Path(options["GxIcon"]).read_bytes(), b"fixture-stage-icon")
+            self.assertEqual(options["GxFontNames"], "JetBrainsMono.ttf|NotoSansCJK.ttc")
             write(Path(options["GxOutput"]) / f"{options['GxFilename']}.exe", b"fixture installer")
 
         with (mock.patch.object(package, "run", side_effect=iscc),
@@ -678,11 +742,11 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(result["components"]["herdr"]["revision"], HERDR_SHA)
 
     def test_cli_assemble_accepts_explicit_lock_and_root_head_only(self):
-        wezterm, ohmyzsh = wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
+        ghostty, ohmyzsh = ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
         output = io.StringIO()
         with (mock.patch.object(package, "source_info", return_value=(SHA, False, 1700000000)),
               mock.patch.object(package, "validate_version", return_value="0.1.0"), contextlib.redirect_stdout(output)):
-            result = package.main(["assemble", "--platform", "windows", "--wezterm-stage", str(wezterm),
+            result = package.main(["assemble", "--platform", "windows", "--ghostty-stage", str(ghostty),
                                    "--ohmyzsh-stage", str(ohmyzsh), "--output", str(self.root / "out"),
                                    "--components-lock", str(self.lock)])
         self.assertEqual(result, 0)
@@ -690,9 +754,9 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(package.read_json(self.root / "out/assembly-manifest.json")["source_commit"], SHA)
 
     def test_local_assembly_cannot_be_promoted_by_changing_only_manifest_flags(self):
-        wezterm = wezterm_stage(self.root, "windows")
+        ghostty = ghostty_stage(self.root, "windows")
         ohmyzsh = ohmyzsh_stage(self.root, "windows", publishable=False, herdr_build={"builder": "local"})
-        self.assemble("windows", wezterm, ohmyzsh, allow_dirty=True)
+        self.assemble("windows", ghostty, ohmyzsh, allow_dirty=True)
         assembly = self.root / "out"
         info = package.read_json(assembly / "assembly-manifest.json")
         info.update(publishable=True, local_build=False)
@@ -703,14 +767,14 @@ class AssemblyTests(unittest.TestCase):
 
     @unittest.skipUnless(SYMLINKS, "requires POSIX executable modes")
     def test_stage_and_assembly_executable_modes_are_reverified(self):
-        wezterm, ohmyzsh = wezterm_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux")
+        ghostty, ohmyzsh = ghostty_stage(self.root, "linux"), ohmyzsh_stage(self.root, "linux")
         binary = ohmyzsh / "payload/usr/lib/ohmyzsh-gx/bin/gx-zsh"
         binary.chmod(0o644)
         with self.assertRaisesRegex(package.PackageError, "inventory mismatch"):
-            self.assemble("linux", wezterm, ohmyzsh)
+            self.assemble("linux", ghostty, ohmyzsh)
         binary.chmod(0o755)
-        self.assemble("linux", wezterm, ohmyzsh)
-        (self.root / "out/root/usr/lib/wezterm-gx/wezterm-gx").chmod(0o644)
+        self.assemble("linux", ghostty, ohmyzsh)
+        (self.root / "out/root/usr/lib/ghostty-gx/bin/ghostty").chmod(0o644)
         with self.assertRaisesRegex(package.PackageError, "inventory mismatch"):
             package.build(self.root / "out", self.root / "dist")
 
@@ -744,27 +808,27 @@ class AssemblyTests(unittest.TestCase):
         command(["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Fixture",
                  "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture coordinator"])
         coordinator_sha = command(["git", "rev-parse", "HEAD"])
-        self.assertNotIn(coordinator_sha, (HERDR_SHA, OMZ_SHA, WEZTERM_SHA))
-        wezterm, ohmyzsh = wezterm_stage(self.root, platform), ohmyzsh_stage(self.root, platform)
+        self.assertNotIn(coordinator_sha, (HERDR_SHA, OMZ_SHA, GHOSTTY_SHA))
+        ghostty, ohmyzsh = ghostty_stage(self.root, platform), ohmyzsh_stage(self.root, platform)
         if platform == "windows":
             dib = struct.pack("<IIIHHIIIIII", 40, 16, 32, 1, 32, 0, 1024, 0, 0, 0, 0)
             image = dib + bytes((32, 80, 128, 255)) * 256 + bytes(64)
             icon = struct.pack("<HHHBBBBHHII", 0, 1, 1, 16, 16, 0, 0, 1, 32, len(image), 22) + image
-            write(wezterm / "build-inputs/terminal.ico", icon)
-            refresh_stage(wezterm, "wezterm")
+            write(ghostty / "build-inputs/ghostty.ico", icon)
+            refresh_stage(ghostty, package.GHOSTTY)
         assembly, dist = self.root / "standalone-assembly", self.root / "standalone-dist"
         output = command([sys.executable, script, "assemble", "--platform", platform,
-                          "--wezterm-stage", wezterm, "--ohmyzsh-stage", ohmyzsh, "--output", assembly,
+                          "--ghostty-stage", ghostty, "--ohmyzsh-stage", ohmyzsh, "--output", assembly,
                           "--components-lock", self.lock, "--allow-dirty"])
         self.assertIn("ASSEMBLED", output)
         manifest = package.read_json(assembly / "assembly-manifest.json")
         self.assertEqual(manifest["source_commit"], coordinator_sha)
         self.assertFalse(manifest["source_dirty"])
         self.assertFalse(manifest["publishable"])
-        shutil.rmtree(wezterm)
+        shutil.rmtree(ghostty)
         shutil.rmtree(ohmyzsh)
         self.lock.unlink()
-        for name in ("herdr", "ohmyzsh", "wezterm"):
+        for name in ("herdr", "ohmyzsh", "gx_ghostty"):
             self.assertFalse((self.coordinator / name).exists())
         output = command([sys.executable, script, "build", "--assembly", assembly, "--output", dist,
                           "--iscc" if platform == "windows" else "--dpkg-deb", compiler])
@@ -779,29 +843,29 @@ class AssemblyTests(unittest.TestCase):
 
     @unittest.skipUnless(SYMLINKS, "requires POSIX symlinks")
     def test_windows_stage_and_redistribution_refuse_symlinks(self):
-        for index, relative in enumerate(("app/wezterm.exe", "build-inputs/terminal.ico", "fonts/JetBrainsMono.ttf")):
+        for index, relative in enumerate(("app/ghostty.exe", "build-inputs/ghostty.ico", "fonts/JetBrainsMono.ttf")):
             root = self.root / str(index)
-            wezterm, ohmyzsh = wezterm_stage(root, "windows"), ohmyzsh_stage(root, "windows")
-            path = wezterm / relative
+            ghostty, ohmyzsh = ghostty_stage(root, "windows"), ohmyzsh_stage(root, "windows")
+            path = ghostty / relative
             path.unlink()
             outside = root / "outside"
             write(outside)
             os.symlink(outside, path)
             with self.assertRaisesRegex(package.PackageError, "symlinks"):
-                self.assemble("windows", wezterm, ohmyzsh)
+                self.assemble("windows", ghostty, ohmyzsh)
 
     @unittest.skipUnless(os.name == "nt", "Windows junction protection")
     def test_windows_stage_refuses_directory_junctions(self):
-        wezterm, ohmyzsh = wezterm_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
+        ghostty, ohmyzsh = ghostty_stage(self.root, "windows"), ohmyzsh_stage(self.root, "windows")
         destination = self.root / "external-inputs"
-        (wezterm / "build-inputs").rename(destination)
-        link = wezterm / "build-inputs"
+        (ghostty / "build-inputs").rename(destination)
+        link = ghostty / "build-inputs"
         result = package.subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(destination)], capture_output=True)
         if result.returncode:
             self.skipTest("junction creation unavailable")
         try:
             with self.assertRaisesRegex(package.PackageError, "symlinks"):
-                self.assemble("windows", wezterm, ohmyzsh)
+                self.assemble("windows", ghostty, ohmyzsh)
         finally:
             link.rmdir()
 
@@ -822,8 +886,10 @@ class ReleaseVerificationTests(unittest.TestCase):
             package.finish_artifacts(self.dir, self.manifest(platform), name, sources)
 
     def manifest(self, platform, local=False):
-        wezterm = {"schema": 2, "platform": package.PLATFORMS[platform]["wezterm"],
-                   "source_repository": "gx0404/wezterm", "source_commit": WEZTERM_SHA, "source_dirty": False}
+        ghostty = {"schema": 3, "platform": package.PLATFORMS[platform][package.GHOSTTY], "architecture": "amd64",
+                   "source_repository": "gx0404/gx_ghostty", "source_commit": GHOSTTY_SHA, "source_dirty": False,
+                   "package_version": "0.1.0", "product_version": "1.3.2-gx.0.1.0", "zig_version": "0.16.0",
+                   "binaries": {"ghostty.exe" if platform == "windows" else "ghostty": "f" * 64}}
         ohmyzsh = {"schema_version": 1, "platform": package.PLATFORMS[platform]["ohmyzsh"],
                    "source": {"repository": "gx0404/ohmyzsh", "revision": OMZ_SHA, "dirty": False},
                    "herdr": {"repository": "https://github.com/gx0404/herdr", "revision": HERDR_SHA},
@@ -832,13 +898,13 @@ class ReleaseVerificationTests(unittest.TestCase):
                                    "package_manager": package.PLATFORMS[platform]["herdr"]},
                    "publishable": not local, "compliance_complete": True}
         lock = package.read_json(self.lock)
-        return {"schema": 2, "product": package.PRODUCT, "version": "0.1.0", "platform": platform,
+        return {"schema": 3, "product": package.PRODUCT, "version": "0.1.0", "platform": platform,
                 "architecture": package.PLATFORMS[platform]["arch"], "source_date_epoch": 1700000000,
                 "source_commit": SHA, "source_dirty": False, "local_build": local, "publishable": not local,
                 "coordinator": {"repository": "gx0404/gx_shell", "revision": SHA, "dirty": False},
                 "components_lock": lock, "components_lock_digest": package.digest(self.lock),
-                "components": package.component_metadata(lock, wezterm, ohmyzsh),
-                "stages": {"wezterm": wezterm, "ohmyzsh": ohmyzsh}, "payload": [{"path": "fixture"}]}
+                "components": package.component_metadata(lock, ghostty, ohmyzsh),
+                "stages": {package.GHOSTTY: ghostty, "ohmyzsh": ohmyzsh}, "payload": [{"path": "fixture"}]}
 
     def replace_manifest(self, change, platform="linux"):
         name, sources = package.artifact_names("0.1.0", platform)
@@ -925,7 +991,7 @@ class ReleaseVerificationTests(unittest.TestCase):
         shutil.copyfile(package.__file__, script)
         shutil.copyfile(sources.__file__, script.parent / "gx_shell_sources.py")
         write(self.lock.parent / "CHANGELOG.md", b"## 0.1.0(2026-09-29)\n\n- Fixture\n")
-        for name in ("herdr", "ohmyzsh", "wezterm"):
+        for name in ("herdr", "ohmyzsh", "gx_ghostty"):
             self.assertFalse((self.lock.parent / name).exists())
         argv = [sys.executable, str(script), "verify", "--dir", str(self.dir), "--version", "0.1.0",
                 "--sha", SHA, "--components-lock", str(self.lock)]
@@ -946,25 +1012,113 @@ class ReleaseVerificationTests(unittest.TestCase):
         self.assertTrue(stderr.write.called)
 
 
-class RepositoryTests(unittest.TestCase):
-    def test_gx_zsh_start_menu_shortcut_opens_in_wezterm_gx_on_the_local_domain(self):
-        text = (package.ROOT / "packaging/windows/gx-shell.iss").read_text(encoding="utf-8-sig")
-        entry = re.search(r'^Name: "\{autoprograms\}\\GX Zsh";.*$', text, re.M)
-        self.assertIsNotNone(entry)
-        self.assertIn(r'Filename: "{app}\wezterm\wezterm-gx.exe"', entry.group(0))
-        self.assertIn(r'Parameters: "start --domain local --attach -- ""{app}\bin\gx-zsh.exe"""', entry.group(0))
+def windows_arguments(command_line: str) -> list[str]:
+    """argv as Windows (and the Zig runtime Ghostty GX uses) splits a command line."""
+    import ctypes
+    from ctypes import wintypes
 
-    def test_upgrades_delete_the_pacman_records_of_replaced_base_packages(self):
-        text = (package.ROOT / "packaging/windows/gx-shell.iss").read_text(encoding="utf-8-sig")
-        section = re.search(r"^\[InstallDelete\]\n(.*?)(?=^\[)", text, re.M | re.S)
+    split = ctypes.windll.shell32.CommandLineToArgvW
+    split.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int))
+    split.restype = ctypes.POINTER(wintypes.LPWSTR)
+    count = ctypes.c_int()
+    argv = split("ghostty.exe " + command_line, ctypes.byref(count))
+    try:
+        return [argv[index] for index in range(1, count.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
+class RepositoryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.iss = (REPOSITORY_ROOT / "packaging/windows/gx-shell.iss").read_text(encoding="utf-8-sig")
+        cls.code = cls.iss.split("\n[Code]\n", 1)[1]
+
+    def icon(self, name):
+        entry = re.search(r'^Name: "' + re.escape(name) + r'";.*$', self.iss, re.M)
+        self.assertIsNotNone(entry, name)
+        return entry.group(0)
+
+    def between(self, start, end):
+        return self.code[self.code.index(start):self.code.index(end)]
+
+    def test_shortcuts_and_launch_use_the_installed_ghostty_gx(self):
+        ghostty = self.icon(r"{autoprograms}\Ghostty GX")
+        self.assertIn(r'Filename: "{app}\ghostty\ghostty.exe"', ghostty)
+        self.assertNotIn("Parameters:", ghostty)
+        zsh = self.icon(r"{autoprograms}\GX Zsh")
+        self.assertIn(r'Filename: "{app}\ghostty\ghostty.exe"', zsh)
+        self.assertIn(r'Parameters: "-e ""{app}\bin\gx-zsh.exe"""', zsh)
+        self.assertIn(r'IconFilename: "{app}\bin\gx-zsh.exe"', zsh)
+        for entry in (ghostty, zsh, self.icon(r"{autodesktop}\Ghostty GX")):
+            self.assertIn(r'WorkingDir: "{%USERPROFILE}"', entry)
+        self.assertTrue(self.icon(r"{autodesktop}\Ghostty GX").endswith("Tasks: desktopicon"))
+        self.assertIn(r"UninstallDisplayIcon={app}\ghostty\ghostty.exe", self.iss)
+        self.assertIn(r'Filename: "{app}\ghostty\ghostty.exe"; Description: "{cm:LaunchProgram,Ghostty GX}"', self.iss)
+        self.assertNotIn("[Registry]", self.iss)
+        self.assertNotIn("wezterm-gx.exe\"", self.iss)
+
+    @unittest.skipUnless(os.name == "nt", "Windows command-line parser")
+    def test_gx_zsh_shortcut_passes_the_path_as_one_argument(self):
+        quoted = re.search(r'Parameters: "((?:[^"]|"")*)"', self.icon(r"{autoprograms}\GX Zsh")).group(1)
+        for app in (r"C:\Users\gx\AppData\Local\Programs\GXShell",
+                    r"C:\Users\John Doe\AppData\Local\Programs\GXShell"):
+            with self.subTest(app=app):
+                line = quoted.replace('""', '"').replace("{app}", app)
+                self.assertEqual(windows_arguments(line), ["-e", app + r"\bin\gx-zsh.exe"])
+
+    def test_install_delete_removes_only_the_old_wezterm_program_and_stale_pacman_records(self):
+        section = re.search(r"^\[InstallDelete\]\n(.*?)(?=^\[)", self.iss, re.M | re.S)
         self.assertIsNotNone(section)
-        deleted = re.findall(r'^Type: filesandordirs; Name: "\{app\}\\runtime\\msys64\\var\\lib\\pacman\\local\\([^"\\]+)"$',
-                             section.group(1), re.M)
-        self.assertEqual(len(deleted), len(re.findall(r"^Type:", section.group(1), re.M)))
+        entries = re.findall(r'^Type: filesandordirs; Name: "([^"]+)"$', section.group(1), re.M)
+        self.assertEqual(len(entries), len(re.findall(r"^Type:", section.group(1), re.M)))
+        prefix = "{app}\\runtime\\msys64\\var\\lib\\pacman\\local\\"
+        deleted = [entry[len(prefix):] for entry in entries if entry.startswith(prefix)]
+        self.assertEqual(sorted(set(entries) - {prefix + name for name in deleted}), ["{app}\\wezterm"])
         lock = package.read_json(Path(__file__).parent / "fixtures/gx-shell/msys2-upgrades.json")
         replaced = {f"{item['name']}-{item['upgrades_base']}" for item in lock["packages"]}
         self.assertIn("msys2-runtime-3.6.10-5", deleted)
         self.assertLessEqual(replaced, set(deleted))
+
+    def test_standalone_wezterm_gx_is_no_longer_uninstalled_or_removed(self):
+        self.assertIn("LegacyCount = 2;", self.code)
+        self.assertNotIn("{734DC47D-4799-46A6-A286-4A64B802370A}", self.iss)
+        for app_id in ("{DBB81CDE-31BB-487C-9D03-36C19031CC5D}", "{532CEFC3-E286-41A4-B097-631BD705DB76}"):
+            self.assertIn(app_id, self.code)
+        removal = self.between("procedure RemoveOldWezTerm;", "procedure KeepForeignWezTerm;")
+        self.assertIn("InOldWezTerm(LinkTarget(Path))", removal)
+        self.assertIn("InOldWezTerm(Current)", removal)
+        self.assertNotIn("DelTree", self.code)
+        for text in (r"{autoprograms}\WezTerm GX.lnk", r"{autodesktop}\WezTerm GX.lnk", r"{userprograms}\WezTerm (gx).lnk"):
+            self.assertIn(text, self.code)
+        uninstall = self.code[self.code.index("procedure CurUninstallStepChanged"):]
+        self.assertLess(uninstall.index("KeepForeignWezTerm"), uninstall.index("usPostUninstall"))
+        self.assertLess(uninstall.index("usPostUninstall"), uninstall.index("RestoreForeignWezTerm"))
+
+    def test_fonts_no_longer_shipped_are_unregistered_before_their_files_go(self):
+        self.assertIn("#ifndef GxFontNames", self.iss)
+        self.assertIn("ShippedFonts = '|{#GxFontNames}|';", self.code)
+        fonts = self.between("procedure RemoveUnshippedFonts;", "function GhosttyPath")
+        self.assertLess(fonts.index("RemoveFontResourceExW(Path, 0, 0)"), fonts.index("DeleteFile(Path)"))
+        self.assertLess(fonts.index("RegDeleteValue(HKCU, FontKey, Key)"), fonts.index("DeleteFile(Path)"))
+        self.assertIn("SendBroadcastNotifyMessage(WM_FONTCHANGE, 0, 0)", fonts)
+        self.assertIn("NormalizeEntry(ExpandConstant('{app}\\fonts\\') + Name)", fonts)
+        steps = self.code[self.code.index("procedure CurStepChanged"):]
+        self.assertLess(steps.index("ssInstall then"), steps.index("RemoveUnshippedFonts"))
+        self.assertLess(steps.index("RemoveUnshippedFonts"), steps.index("ssPostInstall"))
+        self.assertIn("if ShipsFont(Item.Name) and not RegQueryStringValue(HKCU, FontKey, Key, Existing)",
+                      self.between("procedure FontsMatching", "procedure Fonts("))
+
+    def test_app_paths_is_written_and_removed_only_while_it_is_ours(self):
+        register = self.between("procedure RegisterAppPath;", "procedure UnregisterAppPath;")
+        self.assertIn("belongs to another installation", register)
+        self.assertIn("AppPathsKey + 'ghostty.exe'", register)
+        unregister = self.between("procedure UnregisterAppPath;", "procedure RollbackRegistration;")
+        self.assertIn("NormalizeEntry(Current) = NormalizeEntry(GhosttyPath)", unregister)
+        rollback = self.between("procedure RollbackRegistration;", "function WezTermLink")
+        self.assertIn("if AppPathWritten then UnregisterAppPath;", rollback)
+        post = self.code[self.code.index("procedure CurStepChanged"):self.code.index("function InitializeUninstall")]
+        self.assertLess(post.index("RegisterAppPath;"), post.index("except"))
 
     def test_coordinator_uses_exact_independent_component_lock_not_gitlinks(self):
         import gx_shell_sources as sources
@@ -979,7 +1133,7 @@ class RepositoryTests(unittest.TestCase):
             checksum.assert_called_once_with(path)
             self.assertEqual(raw, path.read_bytes())
             self.assertEqual(hashed, package.digest(path))
-            self.assertEqual(set(lock["components"]), {"herdr", "ohmyzsh", "wezterm"})
+            self.assertEqual(set(lock["components"]), {"herdr", "ohmyzsh", "gx_ghostty"})
             self.assertEqual(len({SHA, *(item["revision"] for item in lock["components"].values())}), 4)
             for name, entry in lock["components"].items():
                 self.assertEqual(entry["repository"], f"gx0404/{name}")

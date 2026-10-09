@@ -3,12 +3,12 @@
 set -eu
 case "$1" in
   install|upgrade)
-    for name in gx-zsh herdr wezterm-gx wezterm-gx-gui; do
+    for name in gx-zsh herdr ghostty-gx; do
       path="/usr/bin/$name"
       if [ -e "$path" ] || [ -L "$path" ]; then
         owner=$(dpkg-query -S "$path" 2>/dev/null) || owner=
         case "$owner" in
-          "gx-shell: $path"|"ohmyzsh-gx: $path"|"herdr-gx: $path"|"wezterm-gx: $path") ;;
+          "gx-shell: $path"|"ohmyzsh-gx: $path"|"herdr-gx: $path") ;;
           *)
             printf '%s\n' "gx-shell: refusing to overwrite existing $path (owner: ${owner:-unmanaged}). Move or uninstall it explicitly first." >&2
             exit 1
