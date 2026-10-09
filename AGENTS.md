@@ -67,8 +67,9 @@
   作为硬依赖，也不以 warning skip 冒充升级测试通过。保留安装/使用/卸载、同版本重装与配置保护检查；
   旧版到新版升级未验证，必须明确披露。WezTerm 的配置与数据（`~/.config/wezterm` 等）不读取、不迁移、不删除。
 - **安装器只动自己拥有的东西**：Windows 仅写 HKCU 的 PATH、字体、`App Paths\ghostty.exe` 与 `Software\GX Shell`，
-  只卸载单独安装的 Oh My Zsh GX / Herdr GX，不再动单独安装的 WezTerm GX；文件占用时拒绝而不杀进程；deb 维护
-  脚本不写用户 HOME。真实安装/卸载只在一次性 runner 或容器执行。
+  只用各自的卸载程序卸载单独安装的 Oh My Zsh GX / Herdr GX / Ghostty GX（Ghostty GX 查 HKCU 与 HKLM，为所有用户
+  安装的只在安装器已提权时卸载，否则拒绝、不弹 UAC），不再动单独安装的 WezTerm GX；卸载任何组件前先查它们与自身的
+  文件，占用时拒绝而不杀进程；deb 维护脚本不写用户 HOME。真实安装/卸载只在一次性 runner 或容器执行。
 - **验收环境隔离**：完整 Windows 安装器与生命周期在 GitHub-hosted Windows 验证；DEB 只支持 Ubuntu 24.04+，在
   Ubuntu GitHub runner 的 Docker Ubuntu 24.04 容器验证。本机不安装 Docker/WSL，仅以隔离的完整 payload 做硬件
   GPU/窗口验收；入口 `scripts/gx_shell_smoke_gpu_windows.ps1` 的 `Run` 在锁定 gx_ghostty 修订通过原生路径隔离审计前

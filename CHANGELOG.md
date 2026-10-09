@@ -24,6 +24,10 @@ Ubuntu 24.04 及更新版本。
 - Windows 上从旧版升级时，安装程序删除旧版自带的 WezTerm GX 程序（安装目录下的 `wezterm`），以及仍指向它的
   「WezTerm GX」开始菜单与桌面快捷方式和 `App Paths\wezterm-gx.exe` 登记。单独安装的 WezTerm GX 不受影响，
   安装程序也不再把它当作旧组件先行卸载；卸载 GX Shell 时同样保留它创建的快捷方式与登记。
+- Windows 安装程序像对待单独安装的 Oh My Zsh GX、Herdr GX 一样，安装前先卸载单独安装的 Ghostty GX（gx_ghostty
+  自己的安装包；交互安装时先询问），之后「Ghostty GX」快捷方式与 `App Paths\ghostty.exe` 由 GX Shell 提供，两者
+  共用的配置 `%LOCALAPPDATA%\ghostty\` 原样保留。它的程序文件被占用时安装程序拒绝继续，不会结束进程。为所有用户
+  安装的 Ghostty GX 只有管理员能卸载：安装程序不是以管理员身份运行时会拒绝继续，请先在「设置 > 应用」里卸载它。
 - Ubuntu 上从旧版升级时，dpkg 删除旧版的 `/usr/lib/wezterm-gx`、`/usr/share/wezterm-gx` 与命令 `wezterm-gx`、
   `wezterm-gx-gui`；Ghostty GX 的命令是 `ghostty-gx`，在其中打开 GX Zsh 用 `ghostty-gx -e gx-zsh`。
 - Windows 开始菜单改为「Ghostty GX」与「GX Zsh」两个快捷方式，可选的桌面快捷方式改为「Ghostty GX」；
@@ -63,8 +67,9 @@ Ubuntu 24.04 及更新版本。
 - 真实硬件 GPU 下的窗口渲染没有验证，CI 只覆盖软件渲染路径（Mesa llvmpipe）。
 - 桌面输入、回显与重绘没有验证。
 - 从旧版本升级没有在 CI 中验证。
-- 与单独安装的 Ghostty GX 同时使用时，两者的「Ghostty GX」快捷方式同名：后安装的覆盖先安装的，卸载其中任何一个
-  都会删掉它；`App Paths\ghostty.exe` 已由别的程序登记时，GX Shell 不改动它。
+- 装好 GX Shell 之后再单独安装 Ghostty GX，两者的「Ghostty GX」快捷方式与 `App Paths\ghostty.exe` 仍会冲突；
+  再次运行 GX Shell 安装程序会先卸载单独安装的 Ghostty GX（为所有用户安装的仍需管理员）。
+- Windows 安装前卸载单独安装的 Ghostty GX 这一步没有在 CI 的安装冒烟中验证。
 - herdr 的 Windows 原生通知默认关闭；一旦启用，它会在 `HKCU\Software\Classes` 下写入注册表项，卸载 GX Shell
   时不会清理。
 

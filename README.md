@@ -94,8 +94,12 @@ Windows 上 Ghostty GX 默认进入 GX Zsh，Ubuntu 上用 `ghostty-gx -e gx-zsh
 
 ## 从单独安装的旧版本迁移
 
-- **旧安装包会被替换**：Windows 安装程序会先卸载按用户安装的 Oh My Zsh GX / Herdr GX；Ubuntu 上 `gx-shell` 会自动
-  替换 `ohmyzsh-gx`、`herdr-gx` 包。
+- **旧安装包会被替换**：Windows 安装程序会先卸载单独安装的 Oh My Zsh GX、Herdr GX 与 Ghostty GX（交互安装时先询问；
+  它们的程序文件被占用时拒绝继续，不结束进程）；Ubuntu 上 `gx-shell` 会自动替换 `ohmyzsh-gx`、`herdr-gx` 包。
+- **单独安装的 Ghostty GX**：GX Shell 自带 Ghostty GX，所以 gx_ghostty 自己的安装包装的 Ghostty GX 会被先卸载，按用户
+  安装（HKCU）与为所有用户安装（HKLM）的都会检测；之后「Ghostty GX」快捷方式与 `App Paths\ghostty.exe` 由 GX Shell
+  提供，两者共用的配置 `%LOCALAPPDATA%\ghostty\` 原样保留。为所有用户安装的那份只有管理员能卸载：安装程序以管理员
+  身份运行时照样先卸载它，否则拒绝继续（不请求提权），请先在「设置 > 应用」里卸载它再安装 GX Shell。
 - **WezTerm GX**：0.4.0 起 GX Shell 不再包含它，也不再把单独安装的 WezTerm GX 当作旧组件卸载或替换，两者可以共存。
   Windows 上从 0.3.0 及以前升级时，安装程序删除旧版自带的 WezTerm GX 程序（安装目录下的 `wezterm`），以及仍指向它的
   「WezTerm GX」开始菜单与桌面快捷方式和 `App Paths\wezterm-gx.exe`；指向别处（例如单独安装的 WezTerm GX）的同名
@@ -135,9 +139,10 @@ herdr 新开的窗格使用 GX Zsh：GX Zsh 第一次启动时生成或接管 `<
   日志 `%LOCALAPPDATA%\ghostty\logs\ghostty.log` 里 `loaded OpenGL … software=true` 表示正在用软件渲染。
 - 0.3.0 及以前 WezTerm GX 的设置面板、Shell 选择器、壁纸、插件、键位与图片粘贴在 Ghostty GX 里没有对应功能，
   WezTerm 的配置不会迁移。
-- 与单独安装的 Ghostty GX（gx_ghostty 自己的安装包）同时使用时，两者的「Ghostty GX」开始菜单与桌面快捷方式同名：
-  后安装的覆盖先安装的，卸载其中任何一个都会删掉它。`App Paths\ghostty.exe` 已由别的程序登记时 GX Shell 不改动它，
-  但单独安装的 Ghostty GX 安装时会覆盖、卸载时会删除这一登记。
+- 装好 GX Shell 之后再单独安装 Ghostty GX（gx_ghostty 自己的安装包）仍会冲突：按用户安装时它覆盖同名的「Ghostty GX」
+  开始菜单与桌面快捷方式和 `App Paths\ghostty.exe`，卸载两者中任何一个都会删掉这个快捷方式，卸载它还会删掉这一登记
+  （GX Shell 不改动指向别处的登记）；为所有用户安装时开始菜单会有两个「Ghostty GX」。再次运行 GX Shell 安装程序会按
+  上文「单独安装的 Ghostty GX」先卸载它。
 
 ## 仓库结构
 
@@ -241,9 +246,11 @@ Ghostty GX 按 `<exe 目录>\..\bin` 找 GX Zsh，所以布局变更须同步 Oh
 GX Zsh 探测（`src/gx/profiles.zig`）、根 packager、安装生命周期与硬件 GPU 冒烟入口，并更新来源锁。0.3.0 及以前的
 `{app}\wezterm\` 与 `/usr/lib/wezterm-gx` 在升级时删除。
 
-Windows 安装器仅管理 HKCU 中自己的 PATH、字体、`App Paths\ghostty.exe` 和 `Software\GX Shell`；文件被占用时拒绝继续，
-不杀进程。deb 维护脚本不写用户 HOME。真实安装/卸载仅在一次性 runner 或容器执行；开发机不运行安装
-生命周期冒烟，只验证隔离的完整 payload 的硬件 GPU/窗口，具体边界见「验收与 PENDING」。
+Windows 安装器仅管理 HKCU 中自己的 PATH、字体、`App Paths\ghostty.exe` 和 `Software\GX Shell`；此外只会调用单独安装的
+Oh My Zsh GX、Herdr GX、Ghostty GX 自己的卸载程序把它们静默卸载（为所有用户安装的 Ghostty GX 只在安装器以管理员身份
+运行时卸载，否则拒绝继续，不请求提权）。自己或这些程序的文件被占用时拒绝继续，不杀进程。deb 维护脚本不写用户 HOME。
+真实安装/卸载仅在一次性 runner 或容器执行；开发机不运行安装生命周期冒烟，只验证隔离的完整 payload 的硬件 GPU/窗口，
+具体边界见「验收与 PENDING」。
 
 ## Windows 本地构建
 
@@ -424,7 +431,8 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 代码、安装器、workflow 与文档改动在分支 `ghostty-gx`（基于 `be436e51`）上，只做本地提交：`75228021`（替换实现）、
 `96425fd4`（文档）、`0222470c`（复审修正：DEB 推荐 `librsvg2-common`、Linux 冒烟按 Ghostty GX 给定方式启动 GX Zsh、
-stage 目录名与 ghostty-linux 超时对齐消费契约）及其后的文档提交。以下为 2026-10-09 复审时的实测。
+stage 目录名与 ghostty-linux 超时对齐消费契约）、`11ba0803`（安装前先卸载单独安装的 Ghostty GX）及其后的文档提交。
+以下为 2026-10-09 复审时的实测，最后一条是 `11ba0803` 的实测。
 
 - **来源锁**：herdr `702cf257f6a4c9e889a823c09c423bb3b748f8cb`、ohmyzsh `49dc0ea126df07dfb91433b706f996a1f1af96b3`、
   gx_ghostty `0ac89c3012abd3f4a2a79d1d64e7e8c4833c4156`（**占位**：远端 `gx_ghostty` 分支头，没有 `scripts/gx_package.py`），
@@ -462,6 +470,12 @@ stage 目录名与 ghostty-linux 超时对齐消费契约）及其后的文档�
 - **静态检查**：actionlint 1.7.12 检查 `release.yml` 无报告（本机没有 shellcheck，`run:` 脚本未经 shellcheck）；PyYAML 解析
   `release.yml`：16 个 job，`needs` 都指向存在的 job，三个 Ghostty GX job 超时都是 120 分钟；`bash -n` 检查 Linux 冒烟、
   shell stage 与 Debian 维护脚本通过；PowerShell 7 与 Windows PowerShell 解析三个 `.ps1` 无错误；`git diff --check` 干净。
+- **单独安装的 Ghostty GX**：`11ba0803` 让 Windows 安装器像对待 Oh My Zsh GX / Herdr GX 一样先卸载 gx_ghostty 安装包装的
+  Ghostty GX（HKCU 与 HKLM 的 `{49341A18-5070-425E-83B9-79E184242ACF}_is1`），卸载任何组件之前先检查所有已发现安装的
+  程序文件是否被占用；为所有用户安装的那份在安装器未提权时拒绝。实测：Inno Setup 7.1.0 用夹具 payload 直接编译
+  `gx-shell.iss`，无警告；根单测 Windows（`TEMP` 设为 `.local/t5`，`ISCC` 指向 Inno Setup 7.1.0）Ran 243，OK（skipped=8），
+  WSL Ubuntu 24.04（Python 3.12.3，工作区副本）Ran 243，OK（skipped=28）。检测、提示与静默卸载（按用户、为所有用户、文件
+  占用）的真实流程只能在一次性 runner 上验证，Windows 冒烟尚未覆盖。
 
 | 项目 | 0.4.0 当前边界 |
 |---|---|
@@ -471,6 +485,7 @@ stage 目录名与 ghostty-linux 超时对齐消费契约）及其后的文档�
 | Windows 整包 | PASS（本地组装与 Inno Setup 7.1 编译，`-local`、不可发布）；CI 构建 PENDING |
 | `verify`（两平台 provenance 与散列） | PENDING：本地只有 Windows 产物，Windows 部分通过；两平台校验要等 CI |
 | Windows 安装生命周期 / 软件渲染窗口 | PENDING：只在一次性 runner 运行，本机不安装；「Ghostty GX」默认进入 GX Zsh 还依赖 gx_ghostty 的接线 |
+| 先行卸载单独安装的 Ghostty GX | 单测与 Inno Setup 7.1 编译 PASS；真实卸载流程 PENDING：Windows 冒烟未覆盖，须在一次性 runner 上补 |
 | DEB 构建与 Ubuntu 24.04 冒烟 | PENDING：需要 CI（本机不装 Docker）；DEB 夹具与符号链接用例已在 WSL 通过 |
 | 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT` |
 | 从 0.3.0 升级 | 未验证：Windows 冒烟有可选的 `-PreviousInstaller` 段，workflow 不传旧安装包 |
