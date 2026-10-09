@@ -12,7 +12,8 @@ Conflicts: herdr, herdr-gx, ohmyzsh-gx
 Replaces: herdr-gx, ohmyzsh-gx
 Homepage: https://github.com/gx0404/gx_shell
 Description: Ghostty GX terminal, GX Zsh (Oh My Zsh GX) and herdr in one package
- GX Shell bundles the Ghostty GX terminal (a fork of Ghostty) with its themes
+ GX Shell bundles the Ghostty GX terminal (an unofficial fork of Ghostty, not
+ affiliated with or endorsed by the Ghostty project) with its themes
  and fonts, the isolated Oh My Zsh GX profile on a pinned Zsh runtime (gx-zsh),
  and the herdr terminal workspace manager. Ghostty GX is a GTK 4 application
  that needs Ubuntu 24.04 or later (GTK 4.14, libadwaita 1.5).
