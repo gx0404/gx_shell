@@ -59,11 +59,31 @@ Oh My Zsh GX 在真实 Zsh 与伪终端上的测试）：Windows 安装包在一
   默认开启）；终端里只剩空闲的 Shell 时，关闭标签页或窗口不再确认。
 - 渲染需要 OpenGL 4.3。Windows 上显卡驱动达不到时（例如虚拟机或远程桌面），Ghostty GX 改用随包的 Mesa
   软件渲染；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
-- GX Zsh 的提示符改为 Powerlevel10k 的 Lean 风格：各段不再有背景色块，在 Ghostty GX 的默认主题下目录不再显示成
-  看不见文字的蓝色色块；两行布局、各段颜色与 `╭─`/`╰─❯` 框线不变。
 - 字体：随包的字体文件不变，仍是 JetBrains Mono Nerd Font（常规、半粗、粗体及各自的斜体）与 Noto Sans CJK
   （常规、粗体）共 8 个，与 0.3.0 逐字节相同。终端默认用 JetBrainsMono Nerd Font（12 号），中日韩文字用
   Noto Sans CJK SC。Windows 安装程序只登记随包实际带的字体，旧版登记过而新版不再随带的字体，在升级时先注销再删除。
+
+### 组件更新
+
+- **Oh My Zsh GX**：
+  - 提示符改为 Powerlevel10k 的 Lean 风格：各段不再有背景色块，在 Ghostty GX 的默认主题下目录不再显示成看不见
+    文字的蓝色色块；两行布局、各段颜色与 `╭─`/`╰─❯` 框线不变。
+  - 终端集成改以 Ghostty GX 为目标：在 Ghostty GX 或 herdr 窗格里才接管 OSC 7 工作目录上报（改为
+    `file://localhost/…`）；Ghostty GX 自带的 zsh 集成已在位时让给它，不再重复上报 OSC 7 与 OSC 133。
+- **herdr**：仍是 0.9.3，另合入上游 v0.9.3 之后的修复，包括：
+  - Windows 关机或注销时先保存会话，窗格不再因进程被系统结束而从布局里丢失（herdrdev/herdr#5057）。
+  - Windows 上经启动器（如 Scoop shim）或以 32 位程序运行的 Shell，herdr 记下的是 Shell 实际所在的目录，不再退回
+    启动器的目录（herdrdev/herdr#5062）。
+  - Windows 键盘布局里作为重音键（死键）的符号键，与 Ctrl 组合的快捷键可以识别（herdrdev/herdr#5021）。
+  - 托管插件可以从 GitHub 更新（herdrdev/herdr#4245）；agent 挂起或转入后台时保留其会话（herdrdev/herdr#4964）；
+    server 收到挂断信号时继续运行，并记录停止原因（herdrdev/herdr#4965）。
+  - 非拉丁键盘布局下的 Ctrl 组合键按基础键处理（herdrdev/herdr#4961）。
+  - **行为变化**：Windows 上以管理员身份运行的 herdr server 默认只接受管理员终端里的客户端（herdrdev/herdr#4779），
+    0.3.0 里普通终端也能连接并控制它（herdrdev/herdr#4777）。需要时在配置里写 `[server]` 段的
+    `allow_unelevated_clients = true`，或在管理员终端用 `herdr server --allow-unelevated-clients` 启动 server；
+    普通权限的 server 仍接受同一账户的普通与管理员终端。已在运行的 server 要停止并重启后才按新规则。
+  - GX 另修复：在 Ghostty GX 里启动 herdr 时，窗格不再继承 Ghostty 的 shell 集成变量，窗格里的 Shell 不会再加载
+    一次 Ghostty 的 shell 集成。
 
 ### 打包与发版
 
