@@ -2,7 +2,8 @@
 
 一个协调仓锁定三个独立 fork，一次发版产出 Windows EXE 与 Ubuntu DEB，安装后提供：
 
-- **Ghostty GX**：终端（fork 自 [ghostty](https://github.com/ghostty-org/ghostty)，仓库 `gx0404/gx_ghostty`），
+- **Ghostty GX**：终端，基于 [Ghostty](https://github.com/ghostty-org/ghostty) 的非官方分支（仓库 `gx0404/gx_ghostty`，由 gx0404
+  维护，与 Ghostty 团队无关，未获其认可或背书），
   Windows 上是原生应用（OpenGL 4.3，驱动达不到时用随包 Mesa 软件渲染），Ubuntu 上是 GTK 4 应用，带主题和字体。
 - **GX Zsh**：独立 profile 的 Oh My Zsh + powerlevel10k（fork 自 [ohmyzsh](https://github.com/ohmyzsh/ohmyzsh)），
   Windows 上自带私有 MSYS2 与打过中文路径补丁的 Zsh 5.9.2。
