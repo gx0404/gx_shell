@@ -8,11 +8,16 @@ GitHub Release 说明，只写面向用户的变化；验收过程与内部记�
 0.2.0 / 0.1.0 是改为协调仓之前的历史记录：其中 subtree、旧 Release 升级、指纹生成与耗时描述
 不再是现行架构的操作流程或验收结果。保留它们用于解释既有行为，不表示旧资产仍可下载。
 
-## 0.4.0(TBD)
+## 0.4.0(2026-10-10)
 
 本版用 Ghostty GX 取代 WezTerm GX，成为 GX Shell 的终端。Ghostty GX 是 gx0404/gx_ghostty 维护的 Ghostty fork：
 Windows 上是原生应用，Ubuntu 上是 GTK 4 应用。GX Zsh（Oh My Zsh GX）与 herdr 照旧随包提供。DEB 从本版起只支持
-Ubuntu 24.04 及更新版本。
+Ubuntu 24.04 及更新版本。组件为 Ghostty GX 0.0.1（版本串 `1.3.2-gx.0.0.1`，`5525f8bc`）、herdr 0.9.3（`702cf257`）与
+Oh My Zsh GX `5b55db6f`。发布前在 GitHub Actions 上完成两平台构建与测试（含 Ghostty GX 的打包契约与核心测试、
+Oh My Zsh GX 在真实 Zsh 与伪终端上的测试）：Windows 安装包在一次性的 Windows runner 上完成安装、使用（Ghostty GX
+用随包的 Mesa 软件渲染打开 GX Zsh）、同版本重装、卸载与再次安装的冒烟，DEB 在 Ubuntu 24.04 的干净容器里完成安装、
+运行（Ghostty GX 在 Xvfb 下用软件 OpenGL 运行 GX Zsh）、重装、移除与清除，两平台产物的来源与散列核对无误后才发布。
+硬件 GPU 窗口、桌面输入与旧版升级没有验证，见「已知限制」。
 
 ### 升级须知（破坏性变化）
 
@@ -49,8 +54,9 @@ Ubuntu 24.04 及更新版本。
 - 启动配置：Windows 上标签栏「+」旁的下拉按钮（或右键「+」）与主菜单，Ubuntu 上新建标签页按钮的下拉菜单，列出
   本机找到的 GX Zsh、herdr、PowerShell、WSL 发行版、登录 Shell 等，点一下就在新标签页或新窗口里启动；
   `gx-launch-profile` 可以加自己的条目。
-- 主菜单（`Ctrl+Shift+M`）、命令面板与可搜索的快捷键速查表（`Ctrl+Shift+/`）；窗口里唯一的标签页运行 herdr
-  时隐藏标签栏（`gx-herdr-app-mode`，默认开启）；终端里只剩空闲的 Shell 时，关闭标签页或窗口不再确认。
+- 主菜单（`Ctrl+Shift+M`）、命令面板与可搜索的快捷键速查表（`Ctrl+Shift+/`）；两个平台的命令面板都列出「设置」
+  「键盘快捷键」「主菜单」三项，名称随界面语言显示。窗口里唯一的标签页运行 herdr 时隐藏标签栏（`gx-herdr-app-mode`，
+  默认开启）；终端里只剩空闲的 Shell 时，关闭标签页或窗口不再确认。
 - 渲染需要 OpenGL 4.3。Windows 上显卡驱动达不到时（例如虚拟机或远程桌面），Ghostty GX 改用随包的 Mesa
   软件渲染；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
 - GX Zsh 的提示符改为 Powerlevel10k 的 Lean 风格：各段不再有背景色块，在 Ghostty GX 的默认主题下目录不再显示成
