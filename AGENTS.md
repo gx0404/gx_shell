@@ -25,7 +25,7 @@
 - **来源锁与身份**：锁文件 `schema: 1`，`components` 恰含 `herdr`、`ohmyzsh`、`gx_ghostty`；每项恰为
   `repository: gx0404/<name>`、`branch`、`revision: <40 位 commit SHA>`。`branch` 分别为既有默认分支
   `feature/gx_herdr`、`feature/gx_ohmyzsh`、`gx_ghostty`。0.4.0 起 Ghostty GX（`gx0404/gx_ghostty`）取代
-  WezTerm GX，含 `wezterm` 的锁一律拒绝；`gx_ghostty` 的 revision 在 gx_ghostty 发布前是占位（README「来源锁与更新」）。
+  WezTerm GX，含 `wezterm` 的锁一律拒绝。
   构建与 checkout 只使用锁定 SHA，不能解析浮动分支替代它。`scripts/gx_shell_sources.py check` 验结构与原始字节
   SHA-256；`check --require-remote` 另验 commit 存在且可从对应默认分支到达。来源更新必须显式执行、审阅 diff。
 - **checkout 身份与路径边界**：CI 根 checkout 与组件 checkout 分离，CI 组件放在 `RUNNER_TEMP`；这是独立的 Git
