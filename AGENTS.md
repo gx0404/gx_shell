@@ -48,9 +48,11 @@
   `share\ohmyzsh-gx`、`fonts` 加 `{app}\ghostty\`；deb 为 `/usr/lib/{ohmyzsh-gx,ghostty-gx}`、
   `/usr/share/ohmyzsh-gx`、`/usr/bin/{gx-zsh,herdr,ghostty-gx}`。Ghostty GX 按 `<exe 目录>\..\bin` 找 GX Zsh；
   改布局须协调两个 fork 的启动器、gx_ghostty 的 `src/gx/profiles.zig`、根 packager、安装生命周期与硬件 GPU
-  冒烟入口，更新锁并重新验收。升级只删除旧版 `{app}\wezterm\` 及指向它的快捷方式与 `App Paths\wezterm-gx.exe`。
+  冒烟入口，更新锁并重新验收。升级只删除旧版 `{app}\wezterm\` 及指向它的快捷方式与 `App Paths\wezterm-gx.exe`，
+  以及旧版登记过、新版不再随带的字体（先注销再删文件）。
 - **local 永远不可发布**：Windows 先用 `scripts/gx_shell_local_build.ps1` 做只读 CPU/内存规划。
-  Cargo、CMake、Zig、Zsh 共用预算，组件串行，不把 jobs 乘以组件数；GPU 只用于后续 runtime smoke，不用于编译。
+  Cargo、CMake、Zsh 共用预算，组件串行，不把 jobs 乘以组件数；Ghostty GX 的 Zig 构建没有并行度参数，只保证与
+  其他组件串行；GPU 只用于后续 runtime smoke，不用于编译。
   本地构建根固定为当前根仓的 `.local/build/<run>`（通过 `GX_LOCAL_BUILD_ROOT` 传递），缓存和日志也必须留在
   `.local/`；herdr 回执为 `builder=local`，组装必须 `--allow-dirty`，产物带 `-local`，不得提升为可发布包。
   环境不能带 `GH_TOKEN`/`GITHUB_TOKEN`，不得伪造 CI/runner 身份。

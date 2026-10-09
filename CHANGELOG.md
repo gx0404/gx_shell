@@ -19,14 +19,16 @@ Ubuntu 24.04 及更新版本。
 - GX Shell 不再包含 WezTerm GX。它的设置面板、Shell 选择器、壁纸、插件、自定义键位和 `Ctrl+V` 粘贴图片
   （`clipboard_image_paste`）都随之移除，Ghostty GX 里没有对应的迁移。Ghostty GX 使用自己的配置文件：
   Windows 为 `%LOCALAPPDATA%\ghostty\config.ghostty`，Ubuntu 为 `~/.config/ghostty/config.ghostty`。
-- WezTerm 的配置目录 `~/.config/wezterm` 及其数据原样保留，GX Shell 不读取、不迁移，也不删除。
+- WezTerm 的配置与数据（`~/.config/wezterm`，Windows 为 `%USERPROFILE%\.config\wezterm`，以及它的插件、备份与日志
+  目录）原样保留，GX Shell 不读取、不迁移，也不删除；在 WezTerm 里设置的字体、配色与键位不会带到 Ghostty GX。
 - Windows 上从旧版升级时，安装程序删除旧版自带的 WezTerm GX 程序（安装目录下的 `wezterm`），以及仍指向它的
   「WezTerm GX」开始菜单与桌面快捷方式和 `App Paths\wezterm-gx.exe` 登记。单独安装的 WezTerm GX 不受影响，
   安装程序也不再把它当作旧组件先行卸载；卸载 GX Shell 时同样保留它创建的快捷方式与登记。
+- Ubuntu 上从旧版升级时，dpkg 删除旧版的 `/usr/lib/wezterm-gx`、`/usr/share/wezterm-gx` 与命令 `wezterm-gx`、
+  `wezterm-gx-gui`；Ghostty GX 的命令是 `ghostty-gx`，在其中打开 GX Zsh 用 `ghostty-gx -e gx-zsh`。
 - Windows 开始菜单改为「Ghostty GX」与「GX Zsh」两个快捷方式，可选的桌面快捷方式改为「Ghostty GX」；
   `ghostty` 经 `App Paths` 指向随包的 Ghostty GX。
-- DEB 不再支持 Ubuntu 20.04 与 22.04：Ghostty GX 需要 GTK 4.14 与 libadwaita 1.5。命令 `wezterm-gx`、
-  `wezterm-gx-gui` 移除，改为 `ghostty-gx`；在 Ghostty GX 里打开 GX Zsh 用 `ghostty-gx -e gx-zsh`。
+- DEB 不再支持 Ubuntu 20.04 与 22.04：Ghostty GX 需要 GTK 4.14 与 libadwaita 1.5，只能装在 Ubuntu 24.04 及更新版本上。
 - 升级前先运行 `herdr server stop`，再关闭 WezTerm GX、Ghostty GX 和 GX Zsh。安装程序遇到被占用的文件会拒绝
   继续，但不会替你结束进程。
 
@@ -34,15 +36,25 @@ Ubuntu 24.04 及更新版本。
 
 - Windows 上「Ghostty GX」默认打开 GX Zsh；「GX Zsh」快捷方式总在第一个标签页运行 GX Zsh，即使配置了别的
   默认 Shell。
+- 有自己的设置：`Ctrl+,` 或主菜单的「设置」打开。Ubuntu 上是设置对话框（语言、外观与主题、字体、交互、Shell），
+  改动保存在 `gui-settings.ghostty`，不改你的 `config.ghostty`；Windows 上目前打开配置文件。
+- 界面语言默认中文，可以在运行中切换为英文（配置 `language = en`，改回 `zh-CN` 即中文；Ubuntu 上也可以在设置或
+  主菜单的「语言」里选），菜单、命令面板等不用重启就换成新语言。
+- 启动配置：新建标签页按钮的下拉菜单（Windows 上右键标签栏的「+」）和主菜单列出本机找到的 GX Zsh、herdr、
+  PowerShell、WSL 发行版、登录 Shell 等，点一下就在新标签页或新窗口里启动；`gx-launch-profile` 可以加自己的条目。
 - 渲染需要 OpenGL 4.3。Windows 上显卡驱动达不到时（例如虚拟机或远程桌面），Ghostty GX 改用随包的 Mesa
-  软件渲染。
-- 随包字体不变：仍是 JetBrains Mono Nerd Font 与 Noto Sans CJK，文件与 0.3.0 完全相同。
+  软件渲染；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
+- 字体：随包的字体文件不变，仍是 JetBrains Mono Nerd Font（常规、半粗、粗体及各自的斜体）与 Noto Sans CJK
+  （常规、粗体）共 8 个，与 0.3.0 逐字节相同。终端默认用 JetBrainsMono Nerd Font（12 号），中日韩文字用
+  Noto Sans CJK SC。Windows 安装程序只登记随包实际带的字体，旧版登记过而新版不再随带的字体，在升级时先注销再删除。
 
 ### 打包与发版
 
 - 来源锁 `components.lock.json` 的组件改为 `herdr`、`ohmyzsh` 与 `gx_ghostty`（分支 `gx_ghostty`）；Ghostty GX
   以 gx_ghostty 产出的 schema 3 stage 进入组装，安装包清单升级为 schema 3。
 - 安装布局：Windows 的 Ghostty GX 在安装目录下的 `ghostty`，DEB 在 `/usr/lib/ghostty-gx`。
+- DEB 的依赖（Depends）取自每次构建的 Ghostty GX stage 由 dpkg-shlibdeps 得出的结果，并推荐安装
+  `librsvg2-common`（GTK 显示 SVG 图标所需的加载器）。
 - DEB 冒烟只在干净的 Ubuntu 24.04 容器里运行：安装、GX Zsh、herdr、Ghostty GX 在 Xvfb 下以软件 OpenGL 运行
   GX Zsh、重装、移除与清除。Windows 冒烟在一次性 runner 上用随包 Mesa 验证 Ghostty GX 启动 GX Zsh。
 
@@ -51,6 +63,8 @@ Ubuntu 24.04 及更新版本。
 - 真实硬件 GPU 下的窗口渲染没有验证，CI 只覆盖软件渲染路径（Mesa llvmpipe）。
 - 桌面输入、回显与重绘没有验证。
 - 从旧版本升级没有在 CI 中验证。
+- 与单独安装的 Ghostty GX 同时使用时，两者的「Ghostty GX」快捷方式同名：后安装的覆盖先安装的，卸载其中任何一个
+  都会删掉它；`App Paths\ghostty.exe` 已由别的程序登记时，GX Shell 不改动它。
 - herdr 的 Windows 原生通知默认关闭；一旦启用，它会在 `HKCU\Software\Classes` 下写入注册表项，卸载 GX Shell
   时不会清理。
 
