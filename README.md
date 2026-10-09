@@ -209,6 +209,7 @@ checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材�
 当时的头 `0ac89c30`，那个提交还没有 `scripts/gx_package.py`，所以 CI 的 Ghostty GX stage 必然失败。发版前要换成
 gx_ghostty 首个正式发布（计划为 fork 版本 0.0.1，版本串形如 `1.3.2-gx.0.0.1`）的修订，且该修订须含 stage 消费契约
 （`gx_package.py --build`）与 Windows 默认进入 GX Zsh 的接线，再重新 `check --require-remote`，见「本轮快照与当前待验证项」。
+远端 `gx_ghostty` 现在的头 `4f4e0e12` 已含这两项，并用临时锁做过预检；正式发布提交在它之上，锁要换成发布提交本身。
 herdr 的修订必须与锁定 ohmyzsh 的依赖锁（`scripts/packaging/dependencies.json`）一致，`prepare` 会核对；所以 herdr
 默认分支前进后，要先在 ohmyzsh 更新依赖锁，再一起更新本锁。来源校验通过也不代表真实产品已通过验收。
 
@@ -434,7 +435,7 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 代码、安装器、workflow 与文档改动在分支 `ghostty-gx`（基于 `be436e51`）上，只做本地提交：`75228021`（替换实现）、
 `96425fd4`（文档）、`0222470c`（复审修正：DEB 推荐 `librsvg2-common`、Linux 冒烟按 Ghostty GX 给定方式启动 GX Zsh、
 stage 目录名与 ghostty-linux 超时对齐消费契约）、`11ba0803`（安装前先卸载单独安装的 Ghostty GX）及其后的文档提交。
-以下为 2026-10-09 复审时的实测，最后一条是 `11ba0803` 的实测。
+以下为 2026-10-09 复审时的实测；倒数第二条是 `11ba0803` 的实测，最后一条是对已推送的 gx_ghostty `4f4e0e12` 的预检。
 
 - **来源锁**：herdr `702cf257f6a4c9e889a823c09c423bb3b748f8cb`、ohmyzsh `49dc0ea126df07dfb91433b706f996a1f1af96b3`、
   gx_ghostty `0ac89c3012abd3f4a2a79d1d64e7e8c4833c4156`（**占位**：远端 `gx_ghostty` 分支头，没有 `scripts/gx_package.py`），
@@ -445,9 +446,13 @@ stage 目录名与 ghostty-linux 超时对齐消费契约）、`11ba0803`（安�
 - **stage 消费契约**：workflow 与 `gx_shell_build.py` 按 gx_ghostty `scripts/gx_package.py` 文档的消费契约调用
   `windows --build`、`deb --build --install-deps` 与 `verify-stage`；核对的是 gx_ghostty 本地 `gx_ghostty` 分支 `c5ed3e93`
   （已合入 `wip/G5`，尚未推送）。该契约把 Ubuntu 24.04 缺的 `libgtk4-layer-shell.so` 随包放进 `/usr/lib/ghostty-gx/lib/`。
+  已推送的 `4f4e0e12` 相对 `c5ed3e93` 只改了契约文档里的示例版本串（`1.3.2-gx.0.0.1`）与字体说明，命令、参数与 stage
+  布局不变，workflow 不用改。
 - **默认进入 GX Zsh**：到 `c5ed3e93` 为止，`src/gx/profiles.zig::defaultProfile` 仍未接成默认命令，Windows 上不带参数启动
-  会回退到 cmd.exe；gx_ghostty 正在把它接进 win32 的默认命令（尚未提交）。锁定的发布修订必须包含这一接线，否则 Windows
-  冒烟里「Ghostty GX」快捷方式那一段（ghostty → gx-zsh → zsh）会失败；「GX Zsh」快捷方式用 `-e`，不依赖它。
+  会回退到 cmd.exe。`4f4e0e12` 已接上：没有配置 `command` 时，win32 以 `defaultProfile`（GX Zsh、PowerShell 7、
+  Windows PowerShell、命令提示符）作默认命令（`src/apprt/win32/App.zig::updateDefaultCommand`）。锁定的发布修订必须包含
+  这一接线，否则 Windows 冒烟里「Ghostty GX」快捷方式那一段（ghostty → gx-zsh → zsh）会失败；「GX Zsh」快捷方式用 `-e`，
+  不依赖它。
 - **本地端到端（Windows）**：Ghostty GX stage 在 gx_ghostty 主工作区 `c5ed3e93` 上由 `gx_package.py windows --build` 构建
   （钉版 Zig 0.16.0，win32 ReleaseFast，版本串 `1.3.2-gx.0.1.0`：该修订的 CHANGELOG 仍写 0.1.0(TBD)；701 个文件，2 分 23 秒，
   `verify-stage` 通过，构建后工作区仍干净）；shell stage 沿用同日由 ohmyzsh `49dc0ea1` 与 herdr `702cf257` 经规划器、MSVC
@@ -478,18 +483,37 @@ stage 目录名与 ghostty-linux 超时对齐消费契约）、`11ba0803`（安�
   `gx-shell.iss`，无警告；根单测 Windows（`TEMP` 设为 `.local/t5`，`ISCC` 指向 Inno Setup 7.1.0）Ran 243，OK（skipped=8），
   WSL Ubuntu 24.04（Python 3.12.3，工作区副本）Ran 243，OK（skipped=28）。检测、提示与静默卸载（按用户、为所有用户、文件
   占用）的真实流程只能在一次性 runner 上验证，Windows 冒烟尚未覆盖。
+- **gx_ghostty `4f4e0e12` 预检**：远端 `gx_ghostty` 已前进到 `4f4e0e128117b53c49c06849ee7eff48a2d20aff`，gx_ghostty 的正式
+  发布提交会在它之上只做润色。用只把 gx_ghostty 改指它的临时锁（放在 `.local/`，未提交，digest
+  `c270359dac44ee25dcf13d494142a1d54f2b201a307d2ba56a8d4ba70c82ba20`）实测：`check` 与 `check --require-remote` 通过；按
+  prepare 的来源绑定步骤得到 rust `1.96.1`、zig `0.16.0`、版本串 `1.3.2-gx.0.0.1`；`gx_shell_build.py --plan --jobs 6
+  --memory-budget-gb 16` 新 checkout 三个组件后 ready=true。完整本地构建要超过一小时（shell stage 上一轮就用了 35 分钟），
+  所以只跑消费契约一段：用 `gx_shell_build.py` 自己的 `ghostty_version_string` 与 `ghostty_stage_commands` 在锁定 checkout
+  上运行 `gx_package.py windows --build` 与 `verify-stage`。第一次在 `zig build` 里因整机提交内存不足失败（`unable to load
+  'tables.zig': OutOfMemory`，当时有其他构建并行），同一运行目录复用 Zig 缓存重跑通过：701 个文件、`source_dirty=false`、
+  `ghostty.exe` sha256 `a408b0c921b5b9b319eac50745378a0994b840499ed981826b0f693479dbeef6`，8 个字体与 `c5ed3e93` 的 stage、
+  WezTerm GX `dotfiles/fonts` 逐字节相同。shell stage 没有重编，沿用上文那份（ohmyzsh `49dc0ea1` 的 `verify-stage` 复核
+  通过）；`assemble --allow-dirty` 得到 26451 个文件（4 分 52 秒，与 `c5ed3e93` 那次相比只有锁和 9 个 Ghostty GX 文件不同：
+  `ghostty.exe`、README、许可与上游 shell 集成脚本），Inno Setup 7.1.0 编出 `GX-Shell-0.4.0-local-Setup-x64.exe`
+  （179,306,514 字节，sha256 `567438c53f67b9ccc03df30f0e35e85512ec24ef8559fa42fc50ad04ae8640d9`）与 sources（842,379,944 字节），
+  `build` 10 分 52 秒；`verify --allow-dirty` 只因缺 Linux 产物失败，Windows 部分通过。gx_ghostty 契约测试
+  `run_unittests.py test_gx_package test_gx_release` 在 WSL Ubuntu 24.04（Python 3.12.3）的独立 checkout 上 94 项 OK；
+  根单测 Windows（`TEMP` 设为 `.local/t6`，`ISCC` 指向 Inno Setup 7.1.0）Ran 243，OK（skipped=8），WSL 的独立 clone
+  Ran 243，OK（skipped=28）。
+  没有运行：herdr/Oh My Zsh 的 shell stage 重编、DEB 的 Ghostty GX stage（要 Ubuntu 24.04 并装好构建依赖）、
+  `zig_test.py --suite main -Dapp-runtime=none`、两平台 `verify` 与安装器，都留给 CI。
 
 | 项目 | 0.4.0 当前边界 |
 |---|---|
 | 根测试 / workflow 静态检查 | PASS：见上 |
-| 来源锁 | PASS（结构与远端可达）；gx_ghostty 为占位，PENDING 换成正式发布修订；herdr 分支头已前进，见上 |
-| Ghostty GX stage（CI） | PENDING：锁定修订须含 `gx_package.py --build`；`ghostty-windows`、`ghostty-linux`、`ghostty-tests` 未运行 |
-| Windows 整包 | PASS（本地组装与 Inno Setup 7.1 编译，`-local`、不可发布）；CI 构建 PENDING |
+| 来源锁 | PASS（结构与远端可达）；gx_ghostty 为占位，PENDING 换成正式发布修订（指向 `4f4e0e12` 的临时锁已预检通过）；herdr 分支头已前进，见上 |
+| Ghostty GX stage（CI） | PENDING：`ghostty-windows`、`ghostty-linux`、`ghostty-tests` 未运行；`4f4e0e12` 的本地 Windows stage 与 WSL 上的契约测试 PASS |
+| Windows 整包 | PASS（本地组装与 Inno Setup 7.1 编译，`-local`、不可发布；最近一次用 `4f4e0e12` 的 Ghostty GX stage）；CI 构建 PENDING |
 | `verify`（两平台 provenance 与散列） | PENDING：本地只有 Windows 产物，Windows 部分通过；两平台校验要等 CI |
-| Windows 安装生命周期 / 软件渲染窗口 | PENDING：只在一次性 runner 运行，本机不安装；「Ghostty GX」默认进入 GX Zsh 还依赖 gx_ghostty 的接线 |
+| Windows 安装生命周期 / 软件渲染窗口 | PENDING：只在一次性 runner 运行，本机不安装；「Ghostty GX」默认进入 GX Zsh 所需的接线 `4f4e0e12` 已有 |
 | 先行卸载单独安装的 Ghostty GX | 单测与 Inno Setup 7.1 编译 PASS；真实卸载流程 PENDING：Windows 冒烟未覆盖，须在一次性 runner 上补 |
 | DEB 构建与 Ubuntu 24.04 冒烟 | PENDING：需要 CI（本机不装 Docker）；DEB 夹具与符号链接用例已在 WSL 通过 |
-| 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT` |
+| 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT`（审计过的 `f9e67e5f` 是 `4f4e0e12` 的祖先，`4f4e0e12` 的 `src` 也没有 KnownFolders 调用，但仍要对锁定修订重新审计并通过隔离探测） |
 | 从 0.3.0 升级 | 未验证：Windows 冒烟有可选的 `-PreviousInstaller` 段，workflow 不传旧安装包 |
 
 #### 0.3.0 及以前（WezTerm GX，历史记录）
