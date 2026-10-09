@@ -757,8 +757,8 @@ def release_notes(version: str, root: Path = ROOT) -> str:
     return (f"{match.group(1).strip()}\n\n"
             "## 安装\n\n"
             f"- Windows 10 1809+ x64：运行 `{windows}`（按用户安装，无需管理员；安装包未签名，"
-            "SmartScreen 提示时选择“仍要运行”）。会先卸载单独安装的旧版 Oh My Zsh GX / Herdr GX；"
-            "单独安装的 WezTerm GX 不受影响。\n"
+            "SmartScreen 提示时选择“仍要运行”）。会先卸载单独安装的 Oh My Zsh GX、Herdr GX 与 Ghostty GX"
+            "（为所有用户安装的 Ghostty GX 需先在“设置 > 应用”中卸载）；单独安装的 WezTerm GX 不受影响。\n"
             f"- Ubuntu 24.04 及更新版本 amd64：`sudo apt install ./{deb}`（自动替换旧的 ohmyzsh-gx、herdr-gx 包）。\n\n"
             f"`SHA256SUMS` 校验全部文件；`{windows_sources}`、`{deb_sources}` 为再分发组件的对应源码。\n")
 

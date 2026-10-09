@@ -62,11 +62,15 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 
 [CustomMessages]
 english.LegacyPrompt=Separately installed GX components were found:%n%1%nThey will be uninstalled first; user settings are kept. Continue?
-chinesesimplified.LegacyPrompt=检测到单独安装的旧版 GX 组件：%n%1%n将先卸载它们，用户配置会保留。是否继续？
-english.LegacyDeclined=Installation cancelled. Uninstall the older GX components first.
-chinesesimplified.LegacyDeclined=已取消安装。请先卸载旧版 GX 组件。
+chinesesimplified.LegacyPrompt=检测到单独安装的 GX 组件：%n%1%n将先卸载它们，用户配置会保留。是否继续？
+english.LegacyDeclined=Installation cancelled. Uninstall the separately installed GX components first.
+chinesesimplified.LegacyDeclined=已取消安装。请先卸载单独安装的 GX 组件。
 english.LegacyFailed=Could not uninstall %1. Close its programs or uninstall it manually, then run setup again.
 chinesesimplified.LegacyFailed=无法卸载 %1。请关闭相关程序或手动卸载后重新运行安装程序。
+english.LegacyAllUsers=%1 (all users)
+chinesesimplified.LegacyAllUsers=%1（所有用户）
+english.LegacyNeedsAdmin=Only an administrator can uninstall %1. Uninstall it in Settings > Apps, then run setup again; user settings are kept.
+chinesesimplified.LegacyNeedsAdmin=只有管理员才能卸载 %1。请先在“设置 > 应用”中卸载它，再重新运行安装程序；用户配置会保留。
 english.UnsupportedPath=Choose a local installation path of 4 to 100 characters without semicolons or line breaks.
 chinesesimplified.UnsupportedPath=请选择 4 到 100 个字符、不含分号和换行的本地安装路径。
 english.OwnedElsewhere=Uninstall the existing GX Shell before changing its directory. User profile data will be preserved.
@@ -121,7 +125,7 @@ const
   FontPrefix = 'GXShell ';
   FontSuffix = ' (TrueType)';
   ShippedFonts = '|{#GxFontNames}|';
-  LegacyCount = 2;
+  LegacyCount = 4;
   WezTermLinkCount = 3;
   WM_FONTCHANGE = $001D;
 var
@@ -175,61 +179,6 @@ begin
   Result := 0;
   while Value <> '' do
     if NormalizeEntry(NextEntry(Value)) = NormalizeEntry(Entry) then Result := Result + 1;
-end;
-
-{ Separately released components replaced by GX Shell: Oh My Zsh GX and Herdr GX. A separately
-  installed WezTerm GX is no longer part of GX Shell and is left alone. }
-function LegacyName(Index: Integer): String;
-begin
-  case Index of
-    0: Result := 'Oh My Zsh GX';
-  else Result := 'Herdr GX';
-  end;
-end;
-
-function LegacyKey(Index: Integer): String;
-begin
-  case Index of
-    0: Result := UninstallRoot + '{DBB81CDE-31BB-487C-9D03-36C19031CC5D}_is1';
-  else Result := UninstallRoot + '{532CEFC3-E286-41A4-B097-631BD705DB76}_is1';
-  end;
-end;
-
-function UninstallLegacy(Index: Integer): Boolean;
-var Command: String; Code, Waited: Integer;
-begin
-  Result := False;
-  if not RegQueryStringValue(HKCU, LegacyKey(Index), 'UninstallString', Command) then exit;
-  Command := RemoveQuotes(Trim(Command));
-  Log('Uninstalling ' + LegacyName(Index) + ' with ' + Command);
-  if not FileExists(Command) then exit;
-  if not Exec(Command, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, Code) then exit;
-  if Code <> 0 then begin Log('Legacy uninstaller exit code: ' + IntToStr(Code)); exit; end;
-  { The Inno uninstaller finishes in a relaunched temporary copy; wait for its record to disappear. }
-  Waited := 0;
-  while RegKeyExists(HKCU, LegacyKey(Index)) and (Waited < 120000) do begin
-    Sleep(500);
-    Waited := Waited + 500;
-  end;
-  Result := not RegKeyExists(HKCU, LegacyKey(Index));
-end;
-
-function RemoveLegacyInstallations: String;
-var Found: String; I: Integer;
-begin
-  Result := '';
-  Found := '';
-  for I := 0 to LegacyCount - 1 do
-    if RegKeyExists(HKCU, LegacyKey(I)) then Found := Found + '  ' + LegacyName(I) + #13#10;
-  if Found = '' then exit;
-  if not WizardSilent and
-     (MsgBox(FmtMessage(CustomMessage('LegacyPrompt'), [Found]), mbConfirmation, MB_YESNO) <> IDYES) then begin
-    Result := CustomMessage('LegacyDeclined'); exit;
-  end;
-  for I := 0 to LegacyCount - 1 do
-    if RegKeyExists(HKCU, LegacyKey(I)) and not UninstallLegacy(I) then begin
-      Result := FmtMessage(CustomMessage('LegacyFailed'), [LegacyName(I)]); exit;
-    end;
 end;
 
 function ResolvedHerdr: String;
@@ -290,6 +239,84 @@ begin
   Result := (Length(Directory) >= 4) and (Length(Directory) <= 100) and
     (Copy(Directory, 1, 2) <> '\\') and (Pos(';', Directory) = 0) and
     (Pos(#13, Directory) = 0) and (Pos(#10, Directory) = 0);
+end;
+
+{ Separately released GX programs that GX Shell replaces: Oh My Zsh GX and Herdr GX, installed per user,
+  and Ghostty GX, whose installer registers it under HKCU, or under HKLM when it is installed for all users.
+  A separately installed WezTerm GX is no longer part of GX Shell and is left alone. }
+function LegacyName(Index: Integer): String;
+begin
+  case Index of
+    0: Result := 'Oh My Zsh GX';
+    1: Result := 'Herdr GX';
+    2: Result := 'Ghostty GX';
+  else Result := FmtMessage(CustomMessage('LegacyAllUsers'), ['Ghostty GX']);
+  end;
+end;
+
+function LegacyRoot(Index: Integer): Integer;
+begin
+  if Index = 3 then Result := HKLM else Result := HKCU;
+end;
+
+function LegacyKey(Index: Integer): String;
+begin
+  case Index of
+    0: Result := UninstallRoot + '{DBB81CDE-31BB-487C-9D03-36C19031CC5D}_is1';
+    1: Result := UninstallRoot + '{532CEFC3-E286-41A4-B097-631BD705DB76}_is1';
+  else Result := UninstallRoot + '{49341A18-5070-425E-83B9-79E184242ACF}_is1';
+  end;
+end;
+
+function UninstallLegacy(Index: Integer): Boolean;
+var Command: String; Code, Waited: Integer;
+begin
+  Result := False;
+  if not RegQueryStringValue(LegacyRoot(Index), LegacyKey(Index), 'UninstallString', Command) then exit;
+  Command := RemoveQuotes(Trim(Command));
+  Log('Uninstalling ' + LegacyName(Index) + ' with ' + Command);
+  if not FileExists(Command) then exit;
+  if not Exec(Command, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, Code) then exit;
+  if Code <> 0 then begin Log('Legacy uninstaller exit code: ' + IntToStr(Code)); exit; end;
+  { The Inno uninstaller finishes in a relaunched temporary copy; wait for its record to disappear. }
+  Waited := 0;
+  while RegKeyExists(LegacyRoot(Index), LegacyKey(Index)) and (Waited < 120000) do begin
+    Sleep(500);
+    Waited := Waited + 500;
+  end;
+  Result := not RegKeyExists(LegacyRoot(Index), LegacyKey(Index));
+end;
+
+{ Nothing is uninstalled unless every installation found can be: an all-users Ghostty GX needs an
+  administrator, and none of their program files may be in use. Unlike the other two, the Ghostty GX
+  uninstaller does not refuse while its files are in use, so all of them are checked here first. }
+function RemoveLegacyInstallations: String;
+var Found, Directory, Busy: String; I: Integer;
+begin
+  Result := '';
+  Found := '';
+  for I := 0 to LegacyCount - 1 do
+    if RegKeyExists(LegacyRoot(I), LegacyKey(I)) then begin
+      if (LegacyRoot(I) = HKLM) and not IsAdmin then begin
+        Result := FmtMessage(CustomMessage('LegacyNeedsAdmin'), [LegacyName(I)]); exit;
+      end;
+      if RegQueryStringValue(LegacyRoot(I), LegacyKey(I), 'InstallLocation', Directory) then begin
+        Busy := BusyFile(Directory);
+        if Busy <> '' then begin
+          Result := FmtMessage(CustomMessage('BusyFiles'), [Busy]); exit;
+        end;
+      end;
+      Found := Found + '  ' + LegacyName(I) + #13#10;
+    end;
+  if Found = '' then exit;
+  if not WizardSilent and
+     (MsgBox(FmtMessage(CustomMessage('LegacyPrompt'), [Found]), mbConfirmation, MB_YESNO) <> IDYES) then begin
+    Result := CustomMessage('LegacyDeclined'); exit;
+  end;
+  for I := 0 to LegacyCount - 1 do
+    if RegKeyExists(LegacyRoot(I), LegacyKey(I)) and not UninstallLegacy(I) then begin
+      Result := FmtMessage(CustomMessage('LegacyFailed'), [LegacyName(I)]); exit;
+    end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

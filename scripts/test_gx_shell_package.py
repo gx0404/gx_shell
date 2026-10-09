@@ -573,7 +573,8 @@ class AssemblyTests(unittest.TestCase):
         self.assertTrue(notes.startswith("- first\n"))
         self.assertNotIn("newer", notes)
         for name in ("GX-Shell-0.1.0-Setup-x64.exe", "gx-shell_0.1.0_amd64.deb", "SHA256SUMS",
-                     "Ubuntu 24.04", "WezTerm GX 不受影响"):
+                     "Ubuntu 24.04", "WezTerm GX 不受影响", "Oh My Zsh GX、Herdr GX 与 Ghostty GX",
+                     "为所有用户安装的 Ghostty GX"):
             self.assertIn(name, notes)
         for stale in ("20.04", "wezterm-gx"):
             self.assertNotIn(stale, notes)
@@ -1084,7 +1085,6 @@ class RepositoryTests(unittest.TestCase):
         self.assertLessEqual(replaced, set(deleted))
 
     def test_standalone_wezterm_gx_is_no_longer_uninstalled_or_removed(self):
-        self.assertIn("LegacyCount = 2;", self.code)
         self.assertNotIn("{734DC47D-4799-46A6-A286-4A64B802370A}", self.iss)
         for app_id in ("{DBB81CDE-31BB-487C-9D03-36C19031CC5D}", "{532CEFC3-E286-41A4-B097-631BD705DB76}"):
             self.assertIn(app_id, self.code)
@@ -1097,6 +1097,44 @@ class RepositoryTests(unittest.TestCase):
         uninstall = self.code[self.code.index("procedure CurUninstallStepChanged"):]
         self.assertLess(uninstall.index("KeepForeignWezTerm"), uninstall.index("usPostUninstall"))
         self.assertLess(uninstall.index("usPostUninstall"), uninstall.index("RestoreForeignWezTerm"))
+
+    def test_standalone_ghostty_gx_is_uninstalled_like_oh_my_zsh_gx_and_herdr_gx(self):
+        self.assertIn("LegacyCount = 4;", self.code)
+        names = self.between("function LegacyName(", "function LegacyRoot(")
+        for name in ("0: Result := 'Oh My Zsh GX';", "1: Result := 'Herdr GX';", "2: Result := 'Ghostty GX';",
+                     "else Result := FmtMessage(CustomMessage('LegacyAllUsers'), ['Ghostty GX']);"):
+            self.assertIn(name, names)
+        self.assertIn("if Index = 3 then Result := HKLM else Result := HKCU;",
+                      self.between("function LegacyRoot(", "function LegacyKey("))
+        keys = self.between("function LegacyKey(", "function UninstallLegacy(")
+        self.assertIn("else Result := UninstallRoot + '{49341A18-5070-425E-83B9-79E184242ACF}_is1';", keys)
+        legacy = self.between("function UninstallLegacy(", "function PrepareToInstall(")
+        self.assertNotIn("HKCU", legacy)
+        self.assertIn("Exec(Command, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, Code)",
+                      legacy)
+        remove = self.between("function RemoveLegacyInstallations:", "function PrepareToInstall(")
+        steps = ("(LegacyRoot(I) = HKLM) and not IsAdmin", "CustomMessage('LegacyNeedsAdmin')",
+                 "'InstallLocation', Directory", "BusyFile(Directory)", "CustomMessage('BusyFiles')",
+                 "if not WizardSilent and", "CustomMessage('LegacyPrompt')", "not UninstallLegacy(I)",
+                 "CustomMessage('LegacyFailed')")
+        positions = [remove.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        self.assertLess(self.code.index("function BusyFile("), self.code.index("function RemoveLegacyInstallations:"))
+        prepare = self.between("function PrepareToInstall(", "procedure AddOwnedPath;")
+        self.assertLess(prepare.index("BusyFile(ExpandConstant('{app}'))"), prepare.index("RemoveLegacyInstallations"))
+        self.assertLess(prepare.index("RemoveLegacyInstallations"), prepare.index("ResolvedHerdr"))
+        for forbidden in ("TerminateProcess", "taskkill", "ShellExec("):
+            self.assertNotIn(forbidden, self.code)
+
+    def test_custom_messages_exist_in_both_languages(self):
+        section = re.search(r"^\[CustomMessages\]\n(.*?)(?=^\[)", self.iss, re.M | re.S)
+        self.assertIsNotNone(section)
+        entries = re.findall(r"^(english|chinesesimplified)\.(\w+)=", section.group(1), re.M)
+        english = {name for language, name in entries if language == "english"}
+        self.assertEqual(english, {name for language, name in entries if language == "chinesesimplified"})
+        self.assertEqual(len(entries), 2 * len(english))
+        self.assertLessEqual(set(re.findall(r"CustomMessage\('(\w+)'\)", self.code)), english)
+        self.assertLessEqual({"LegacyAllUsers", "LegacyNeedsAdmin"}, english)
 
     def test_fonts_no_longer_shipped_are_unregistered_before_their_files_go(self):
         self.assertIn("#ifndef GxFontNames", self.iss)
