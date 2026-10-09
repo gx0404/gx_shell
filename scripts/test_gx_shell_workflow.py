@@ -61,18 +61,25 @@ class ValidationWorkflowTests(unittest.TestCase):
         self.assertLess(windows.index('git config --global core.autocrlf false'), windows.index('uses: actions/checkout@v5'))
         self.assertIn('["gx_ghostty"]', windows)
         self.assertIn(setup_zig, windows)
+        self.assertIn("$stage = Join-Path $env:RUNNER_TEMP 'ghostty-gx-stage'", windows)
         build = windows.index('python scripts/gx_package.py windows --build --stage-dir $stage '
-                              '--version-string $env:GX_VERSION_STRING')
-        self.assertLess(build, windows.index('python scripts/gx_package.py verify-stage $stage'))
+                              '--version-string $env:GX_VERSION_STRING\n'
+                              '          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }')
+        self.assertLess(build, windows.index('python scripts/gx_package.py verify-stage $stage\n'
+                                             '          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'))
         self.assertIn('GX_VERSION_STRING: ${{ needs.prepare.outputs.ghostty_version_string }}', windows)
         linux = self.job('ghostty-linux')
         self.assertIn('container:\n      image: ubuntu:24.04', linux)
         self.assertLess(linux.index('apt-get install -y --no-install-recommends ca-certificates git python3'),
                         linux.index('uses: actions/checkout@v5'))
         self.assertIn('--component gx_ghostty', linux)
-        self.assertLess(linux.index('python3 scripts/gx_package.py deb --build --install-deps'),
-                        linux.index('python3 scripts/gx_package.py verify-stage "$RUNNER_TEMP/ghostty-stage"'))
+        self.assertLess(linux.index('python3 scripts/gx_package.py deb --build --install-deps '
+                                    '--stage-dir "$RUNNER_TEMP/ghostty-gx-stage"'),
+                        linux.index('python3 scripts/gx_package.py verify-stage "$RUNNER_TEMP/ghostty-gx-stage"'))
         self.assertNotIn('setup-python', linux)
+        for name in ('ghostty-windows', 'ghostty-linux', 'ghostty-tests'):
+            timeout = int(re.search(r'^    timeout-minutes: (\d+)$', self.job(name), re.M).group(1))
+            self.assertTrue(90 <= timeout <= 120, f'{name} timeout-minutes {timeout}')
         tests = self.job('ghostty-tests')
         self.assertIn(setup_zig, tests)
         self.assertIn('python scripts/run_unittests.py test_gx_package test_gx_release', tests)

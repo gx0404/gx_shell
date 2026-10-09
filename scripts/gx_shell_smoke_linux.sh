@@ -369,12 +369,13 @@ PY
     grep -q '/usr/share/fonts/truetype/gx-shell/NotoSansCJK-Regular.ttc' "$evidence/fc-list.txt"
 
     step Ghostty GX runs GX Zsh under Xvfb with software OpenGL
-    # The runner has no GPU: Mesa llvmpipe proves the software rendering path only. -e runs gx-zsh
-    # directly, without a shell in between, so its Zsh is a child of the Ghostty GX process.
+    # The runner has no GPU: Mesa llvmpipe proves the software rendering path only. A direct: command
+    # runs the GX Zsh launcher without a shell in between, and the launcher execs Zsh, so Zsh is a child
+    # of the Ghostty GX process.
     run_user env GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1 timeout 120 \
         xvfb-run -a --server-args='-screen 0 1280x800x24' bash -c '
         set -euo pipefail
-        ghostty-gx -e gx-zsh > "$1/gui.log" 2>&1 &
+        ghostty-gx --gtk-single-instance=false --command=direct:/usr/lib/ohmyzsh-gx/bin/gx-zsh > "$1/gui.log" 2>&1 &
         gui=$!
         trap "kill $gui 2>/dev/null || true; wait $gui 2>/dev/null || true" EXIT
         for _ in $(seq 1 120); do

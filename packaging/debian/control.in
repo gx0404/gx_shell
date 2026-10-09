@@ -6,6 +6,7 @@ Architecture: amd64
 Maintainer: gx0404 <gx0404@users.noreply.github.com>
 Installed-Size: @INSTALLED_SIZE@
 Depends: @DEPENDS@
+Recommends: librsvg2-common
 Provides: herdr
 Conflicts: herdr, herdr-gx, ohmyzsh-gx
 Replaces: herdr-gx, ohmyzsh-gx

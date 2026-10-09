@@ -95,7 +95,8 @@ class SmokeContracts(unittest.TestCase):
                          'run_user ghostty-gx +version', "'  - version: ' + ghostty['product_version']",
                          "ghostty['binaries']['ghostty']", "run_user ghostty-gx +list-fonts '--family=JetBrainsMono Nerd Font'",
                          'xvfb-run', 'GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1',
-                         'ghostty-gx -e gx-zsh', 'pgrep -P "$gui"', 'test "$(readlink "/proc/$gui/exe")" = /usr/lib/ghostty-gx/bin/ghostty',
+                         'ghostty-gx --gtk-single-instance=false --command=direct:/usr/lib/ohmyzsh-gx/bin/gx-zsh',
+                         'pgrep -P "$gui"', 'test "$(readlink "/proc/$gui/exe")" = /usr/lib/ghostty-gx/bin/ghostty',
                          'kill -0 "$gui"', 'scrot "$1/linux.png"', 'loaded OpenGL', "assert_user_configs 'Ghostty GX'"):
             self.assertIn(contract, body)
         self.assertNotIn('wezterm-gx', TEXT)
@@ -157,7 +158,7 @@ class IsolatedPythonHelpers(unittest.TestCase):
     def run_block(self, marker, *args, prefix='', env=None):
         return subprocess.run([sys.executable, '-I', '-B', '-', *map(str, args)],
                               input=prefix + block(marker), cwd=self.root, env=env,
-                              capture_output=True, text=True, encoding='utf-8', timeout=30)
+                              capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

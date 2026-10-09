@@ -275,7 +275,7 @@ jobs:
           $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'gx-zig-global'
           $env:ZIG_LOCAL_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'gx-zig-local'
           $env:GX_GHOSTTY_PACKAGE_CACHE = Join-Path $env:RUNNER_TEMP 'gx-package-cache'
-          $stage = Join-Path $env:RUNNER_TEMP 'ghostty-stage'
+          $stage = Join-Path $env:RUNNER_TEMP 'ghostty-gx-stage'
           python scripts/gx_package.py windows --build --stage-dir $stage --version-string $env:GX_VERSION_STRING
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/gx_package.py verify-stage $stage
@@ -293,7 +293,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.source_run_id == ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 120
     # The deb targets Ubuntu 24.04 and later, so Ghostty GX is built against the Ubuntu 24.04 GTK 4,
     # libadwaita and glibc; scripts/gx_package.py apt-installs its build dependencies and the pinned Zig.
     container:
@@ -330,10 +330,10 @@ jobs:
           export ZIG_GLOBAL_CACHE_DIR="$RUNNER_TEMP/gx-zig-global"
           export ZIG_LOCAL_CACHE_DIR="$RUNNER_TEMP/gx-zig-local"
           export GX_GHOSTTY_PACKAGE_CACHE="$RUNNER_TEMP/gx-package-cache"
-          python3 scripts/gx_package.py deb --build --install-deps --stage-dir "$RUNNER_TEMP/ghostty-stage" \
+          python3 scripts/gx_package.py deb --build --install-deps --stage-dir "$RUNNER_TEMP/ghostty-gx-stage" \
             --version-string "$GX_VERSION_STRING"
-          python3 scripts/gx_package.py verify-stage "$RUNNER_TEMP/ghostty-stage"
-          tar -cf "$RUNNER_TEMP/stage.tar" -C "$RUNNER_TEMP/ghostty-stage" .
+          python3 scripts/gx_package.py verify-stage "$RUNNER_TEMP/ghostty-gx-stage"
+          tar -cf "$RUNNER_TEMP/stage.tar" -C "$RUNNER_TEMP/ghostty-gx-stage" .
       - uses: actions/upload-artifact@v7
         with:
           name: stage-ghostty-linux

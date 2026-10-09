@@ -531,7 +531,9 @@ class AssemblyTests(unittest.TestCase):
         deb = self.root / "dist/gx-shell_0.1.0_amd64.deb"
         self.assertIn(deb.name, result["artifacts"])
         info = package.subprocess.run(["dpkg-deb", "--info", str(deb)], check=True, capture_output=True, text=True).stdout
-        for text in ("Package: gx-shell", "Replaces: herdr-gx, ohmyzsh-gx\n", " preinst", " postinst", " postrm"):
+        for text in ("Package: gx-shell", "Replaces: herdr-gx, ohmyzsh-gx\n", " preinst", " postinst", " postrm",
+                     "Depends: fontconfig, git, libadwaita-1-0 (>= 1.5~beta), libc6 (>= 2.39), libgtk-4-1 (>= 4.14.0)\n",
+                     "Recommends: librsvg2-common\n"):
             self.assertIn(text, info)
         self.assertNotIn("wezterm", info)
         self.assertFalse((self.root / "out/root/DEBIAN").exists())
@@ -558,6 +560,7 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn("Version: 1.2.3\n", text)
         self.assertIn("Installed-Size: 42\n", text)
         self.assertIn("Depends: libc6 (>= 2.29), zsh\n", text)
+        self.assertIn("Recommends: librsvg2-common\n", text)
         self.assertIn("Conflicts: herdr, herdr-gx, ohmyzsh-gx\n", text)
         self.assertIn("Replaces: herdr-gx, ohmyzsh-gx\n", text)
         self.assertNotIn("wezterm", text.lower())
