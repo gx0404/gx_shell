@@ -9,7 +9,7 @@
     "ohmyzsh": {
       "repository": "gx0404/ohmyzsh",
       "branch": "feature/gx_ohmyzsh",
-      "revision": "49dc0ea126df07dfb91433b706f996a1f1af96b3"
+      "revision": "5b55db6f6ac1ac90676d5dc0192381aa6459e501"
     },
     "gx_ghostty": {
       "repository": "gx0404/gx_ghostty",

@@ -53,6 +53,8 @@ Ubuntu 24.04 及更新版本。
   时隐藏标签栏（`gx-herdr-app-mode`，默认开启）；终端里只剩空闲的 Shell 时，关闭标签页或窗口不再确认。
 - 渲染需要 OpenGL 4.3。Windows 上显卡驱动达不到时（例如虚拟机或远程桌面），Ghostty GX 改用随包的 Mesa
   软件渲染；设置环境变量 `GHOSTTY_GX_OPENGL=software` 可以强制使用它。
+- GX Zsh 的提示符改为 Powerlevel10k 的 Lean 风格：各段不再有背景色块，在 Ghostty GX 的默认主题下目录不再显示成
+  看不见文字的蓝色色块；两行布局、各段颜色与 `╭─`/`╰─❯` 框线不变。
 - 字体：随包的字体文件不变，仍是 JetBrains Mono Nerd Font（常规、半粗、粗体及各自的斜体）与 Noto Sans CJK
   （常规、粗体）共 8 个，与 0.3.0 逐字节相同。终端默认用 JetBrainsMono Nerd Font（12 号），中日韩文字用
   Noto Sans CJK SC。Windows 安装程序只登记随包实际带的字体，旧版登记过而新版不再随带的字体，在升级时先注销再删除。
