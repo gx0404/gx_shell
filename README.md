@@ -318,13 +318,14 @@ Ghostty GX 按 gx_ghostty `scripts/gx_package.py` 文档里的消费契约产出
 
 若另行需要本地构建诊断，可使用以下 Windows 入口，`--plan` 仅验证资源和来源。本轮产品验收按下节路线
 执行，本机仅做隔离完整 payload 的硬件 GPU/窗口验证，不以本地编译替代 runner 构建。命令从根仓运行，且所有
-本地/复验路径都在 `.local/` 内；`<run>` 每轮必须替换为新的运行目录名：
+本地/复验路径都在 `.local/` 内；`<run>` 每轮必须替换为新的运行目录名。规划器按每个 job 2 GiB 加 4 GiB 链接余量估算
+内存，`--memory-budget-gb` 小于这个值会被拒绝（8 个 job 至少 20）：
 
 ```powershell
 python scripts/gx_shell_build.py --platform windows --components-lock components.lock.json `
-  --work-root .local/build/<run> --sources-root .local/sources --jobs 8 --memory-budget-gb 12 --plan
+  --work-root .local/build/<run> --sources-root .local/sources --jobs 8 --memory-budget-gb 20 --plan
 python scripts/gx_shell_build.py --platform windows --components-lock components.lock.json `
-  --work-root .local/build/<run> --sources-root .local/sources --jobs 8 --memory-budget-gb 12
+  --work-root .local/build/<run> --sources-root .local/sources --jobs 8 --memory-budget-gb 20
 ```
 
 也可以在已有两个 stage 时直接组装；stage、assembly 和输出目录必须是根仓 `.local/build/<run>` 下的新目录：
@@ -455,6 +456,9 @@ stage 目录名与 ghostty-linux 超时对齐消费契约）及其后的文档�
   都是 Ran 241，OK（skipped=8，均为需要 POSIX 符号链接、可执行位或 dpkg-deb 的用例）；WSL Ubuntu 24.04.4（Python 3.12.3）
   Ran 241，OK（skipped=28，均为 PowerShell/Windows 专用用例；DEB 的 `Recommends` 与 `Depends` 断言在这里实际运行）。
   中文区域设置下子进程输出一律容错解码，测试输出里不再出现读线程的 `UnicodeDecodeError`。
+- **本地构建规划**：`gx_shell_build.py --plan --jobs 8`（来源放在 `.local/sources/p1`）按锁 checkout 三个组件（gx_ghostty
+  为占位修订）后，规划器 ready=true（Rust 1.96.1 MSVC、MSVC/SDK 就绪）。上文示例原来的 `--memory-budget-gb 12` 会因
+  内存预算不足被拒绝，已改为 20。
 - **静态检查**：actionlint 1.7.12 检查 `release.yml` 无报告（本机没有 shellcheck，`run:` 脚本未经 shellcheck）；PyYAML 解析
   `release.yml`：16 个 job，`needs` 都指向存在的 job，三个 Ghostty GX job 超时都是 120 分钟；`bash -n` 检查 Linux 冒烟、
   shell stage 与 Debian 维护脚本通过；PowerShell 7 与 Windows PowerShell 解析三个 `.ps1` 无错误；`git diff --check` 干净。
