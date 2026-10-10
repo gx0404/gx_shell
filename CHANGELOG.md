@@ -59,6 +59,8 @@ GitHub Release 说明，只写面向用户的变化；验收过程与内部记�
   下生效，同样没有验证。
 - 桌面输入、回显与重绘没有验证。
 - 从旧版本升级（包括从 0.4.0 升级到本版）没有在 CI 中验证。
+- 装好 GX Shell 之后再单独安装 Ghostty GX，两者的「Ghostty GX」快捷方式与 `App Paths\ghostty.exe` 仍会冲突；
+  再次运行 GX Shell 安装程序会先卸载单独安装的 Ghostty GX（为所有用户安装的仍需管理员）。
 - Windows 安装前卸载单独安装的 Ghostty GX 这一步没有在 CI 的安装冒烟中验证。
 - herdr 的 Windows 原生通知默认关闭；一旦启用，它会在 `HKCU\Software\Classes` 下写入注册表项，卸载 GX Shell
   时不会清理。
