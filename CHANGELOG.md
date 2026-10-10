@@ -8,6 +8,61 @@ GitHub Release 说明，只写面向用户的变化；验收过程与内部记�
 0.2.0 / 0.1.0 是改为协调仓之前的历史记录：其中 subtree、旧 Release 升级、指纹生成与耗时描述
 不再是现行架构的操作流程或验收结果。保留它们用于解释既有行为，不表示旧资产仍可下载。
 
+## 0.4.1(2026-10-10)
+
+本版把随包的 Ghostty GX 从 0.0.1 更新到 0.0.2，GX Zsh 与 herdr 不变。组件为 Ghostty GX 0.0.2（版本串
+`1.3.2-gx.0.0.2`，`1be3d19f`）、herdr 0.9.3（`702cf257`）与 Oh My Zsh GX `5b55db6f`。发布前在 GitHub Actions 上完成
+两平台构建与测试（含 Ghostty GX 的打包契约与核心测试、Oh My Zsh GX 在真实 Zsh 与伪终端上的测试）：Windows 安装包在
+一次性的 Windows runner 上完成安装、使用（Ghostty GX 用随包的 Mesa 软件渲染打开 GX Zsh）、同版本重装、卸载与再次安装
+的冒烟，DEB 在 Ubuntu 24.04 的干净容器里完成安装、运行（Ghostty GX 在 Xvfb 下用软件 OpenGL 运行 GX Zsh）、重装、
+移除与清除，两平台产物的来源与散列核对无误后才发布。硬件 GPU 窗口、桌面输入与旧版升级没有验证，见「已知限制」。
+
+### Ghostty GX 0.0.2
+
+- **窗口材质透到整个终端区**（Windows）：在设置的「外观」页选云母、亚克力或云母 Alt
+  （`gx-window-material = mica|acrylic|tabbed`）后，材质不再只透在标题栏：终端背景按 `background-opacity` 透出材质，
+  文字、光标、选区与图片保持不透明。没设 `background-opacity` 时按材质取默认值（云母与云母 Alt 为 0.3，亚克力为
+  0.75），显式设置优先（`background-opacity = 1` 即只在标题栏透出材质）。默认的纯色材质配 `background-opacity` 小于 1
+  时，改为只有终端背景透明，文字不再随整个窗口变淡。需要 Windows 11 22H2（build 22621）及以上与硬件 OpenGL 驱动；
+  更早的系统或使用随包 Mesa 软件渲染时保持 0.4.0 的行为，日志里记一行原因。
+- **检测被占用的快捷键**（Windows）：组合键被其他程序注册成全局热键（例如 bilibili 客户端老板键的 `Ctrl+Shift+C`、
+  AMD Software 性能指标叠加层的 `Ctrl+Shift+O`）或被当前输入法保留时，Ghostty GX 收不到它，以前也没有提示。现在受
+  影响的快捷键在日志里记警告，快捷键速查表（`Ctrl+Shift+/`）给它们加警告标记并说明原因，右键菜单、主菜单与命令面板
+  改为提示同一动作的其他可用按键；默认的复制、粘贴、查找或分屏键受影响时，每次运行在窗口底部提示一次替代方式。常见的
+  冲突程序与解除办法见 Ghostty GX 的[快捷键冲突说明](https://github.com/gx0404/gx_ghostty/blob/1be3d19fc75f012317c09a7d55fa4be2380fb4a4/docs/GX_FEATURES.md#快捷键冲突)。
+- **`Shift+Insert` 粘贴剪贴板**（Windows）：以前按下没有反应；现在与 `Ctrl+Insert` 复制配对，`Ctrl+Shift+C` /
+  `Ctrl+Shift+V` 被其他程序占用时仍可用这两个键复制粘贴。
+- **新图标**（Windows）：Ghostty GX 改用自己的图标（深色圆角方块加蓝色 `>_` 提示符），不再用 Ghostty 的幽灵图标，
+  窗口标题栏、任务栏与资源管理器里都显示它；`ghostty.exe` 的文件属性显示产品名 Ghostty GX、发行者 gx0404 与非官方
+  分支声明。Ubuntu 上仍是上游图标。
+- **非官方分支声明**：Windows 的「关于」对话框与设置的「关于」页、Ubuntu 设置对话框的「关于」页写明 Ghostty GX 是
+  Ghostty 的非官方分支，由 gx0404 维护，与 Ghostty 团队无关，未获其认可或背书（英文界面显示英文）。Ubuntu 主菜单的
+  「关于 Ghostty GX」改为打开 Ghostty GX 自己的关于对话框，项目主页与问题反馈指向 gx0404/gx_ghostty；Windows「关于」
+  对话框的第二个链接改为「上游 Ghostty」（ghostty.org）。
+- **Ubuntu 上的界面修复**：Ubuntu 24.04 的 GTK 4.14 上启动时不再记录 `Theme parser error: style.css:…`；拖动分屏时，
+  目标终端靠近指针的那一半重新显示蓝色高亮；只读提示的文字恢复浅橙色；`window-theme = ghostty` 时不再报
+  `css parsing failed`，失焦窗口的标题栏会略微变暗。GTK 4.16–4.18 上拖放高亮也不再报 CSS 错误。
+- 合入上游 Ghostty 到 `246f70287`：`+list-themes` 的主题预览可以用 `Ctrl+D` / `Ctrl+U` 翻页。
+
+### 安装包与说明
+
+- Windows 上「Ghostty GX」开始菜单与桌面快捷方式随之显示 Ghostty GX 的新图标，GX Shell 安装程序和「设置 > 应用」里的
+  GX Shell 条目也改用它；「GX Zsh」快捷方式仍是 GX Zsh 的图标。
+- DEB 的包说明（`apt show gx-shell` 可见）写明 Ghostty GX 是 Ghostty 的非官方分支，与 Ghostty 项目无关，也未获其认可
+  或背书。
+- 仓库 README 介绍 Ghostty GX 时同样写明：它是基于 Ghostty 的非官方分支，由 gx0404 维护，与 Ghostty 团队无关，未获其
+  认可或背书。
+
+### 已知限制
+
+- 真实硬件 GPU 下的窗口渲染没有验证，CI 只覆盖软件渲染路径（Mesa llvmpipe）；本版窗口材质透到终端区只在硬件 OpenGL
+  下生效，同样没有验证。
+- 桌面输入、回显与重绘没有验证。
+- 从旧版本升级（包括从 0.4.0 升级到本版）没有在 CI 中验证。
+- Windows 安装前卸载单独安装的 Ghostty GX 这一步没有在 CI 的安装冒烟中验证。
+- herdr 的 Windows 原生通知默认关闭；一旦启用，它会在 `HKCU\Software\Classes` 下写入注册表项，卸载 GX Shell
+  时不会清理。
+
 ## 0.4.0(2026-10-10)
 
 本版用 Ghostty GX 取代 WezTerm GX，成为 GX Shell 的终端。Ghostty GX 是 gx0404/gx_ghostty 维护的 Ghostty fork：
