@@ -1,5 +1,8 @@
+import os
 from pathlib import Path
 import re
+import tempfile
+import textwrap
 import unittest
 
 
@@ -140,6 +143,69 @@ class ValidationWorkflowTests(unittest.TestCase):
         self.assertIn('needs: [prepare, verify]', publish)
         self.assertIn("needs.prepare.outputs.publish == 'true'", publish)
 
+
+    IDENTITY_ZIG = '''const Identity = @This();
+pub const installed_aumid = "gx0404.GhosttyGX";
+pub const installed_activator = "978ab84b-3cac-4593-95d5-2e04d68eed4f";
+pub const action_switch = "--gx-shell-action=";
+pub const server_argument = "--gx-shell-action=toast-server";
+pub const profile_argument = "--gx-shell-action=profile";
+pub const manifest = .{ .aumid = installed_aumid, .activator_clsid = installed_activator, .local_server_argument = server_argument, .profile_action_argument = profile_argument };
+'''
+    INSTALLER = '''#define GhosttyAumid "gx0404.GhosttyGX"
+#define GhosttyActivator "978AB84B-3CAC-4593-95D5-2E04D68EED4F"
+[Setup]
+AppId={{EDDE7553-FF3A-4F95-B9A5-E4D037FEE617}
+[Registry]
+Root: HKCU; Subkey: "Software\\Classes\\CLSID\\{{{#GhosttyActivator}}\\LocalServer32"; ValueData: """{app}\\ghostty\\ghostty.exe"" --gx-shell-action=toast-server"
+'''
+
+    def shell_identity_check(self):
+        step = self.job('prepare')
+        start = step.index('name: Bind lock digest, component dependency identity and toolchains')
+        step = step[start:]
+        begin = step.index("          # The installer hard-codes Ghostty GX's Windows shell identity")
+        end = step.index('          version_string = build.ghostty_version_string(')
+        return step, textwrap.dedent(step[begin:end])
+
+    def run_shell_identity_check(self, identity, installer):
+        _, code = self.shell_identity_check()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ghostty = root / 'sources/gx_ghostty'
+            (ghostty / 'src/apprt/win32/shell').mkdir(parents=True)
+            (ghostty / 'src/apprt/win32/shell/Identity.zig').write_text(identity, encoding='utf-8')
+            (root / 'packaging/windows').mkdir(parents=True)
+            (root / 'packaging/windows/gx-shell.iss').write_text(installer, encoding='utf-8-sig')
+            previous = os.getcwd()
+            os.chdir(root)
+            try:
+                exec(code, {'re': re, 'Path': Path, 'ghostty': ghostty})
+            finally:
+                os.chdir(previous)
+
+    def test_installer_shell_identity_matches_the_locked_ghostty_revision(self):
+        step, code = self.shell_identity_check()
+        self.assertLess(step.index('ghostty = root / "sources/gx_ghostty"'), step.index(code.splitlines()[0].strip()))
+        for needle in ('ghostty / "src/apprt/win32/shell/Identity.zig"', 'Path("packaging/windows/gx-shell.iss")',
+                       'installed_aumid', 'installed_activator', 'server_argument', 'pub const manifest',
+                       'local_server_argument', 'activator_clsid'):
+            self.assertIn(needle, code)
+        self.assertLess(step.index('Ghostty GX must pin an exact Zig version'), step.index('Identity.zig'))
+        self.assertLess(step.index('Identity.zig'), step.index('GITHUB_OUTPUT'))
+        self.run_shell_identity_check(self.IDENTITY_ZIG, self.INSTALLER)
+        mismatches = {
+            'aumid': (self.IDENTITY_ZIG, self.INSTALLER.replace('gx0404.GhosttyGX', 'gx0404.GhosttyGX.Other')),
+            'activator': (self.IDENTITY_ZIG, self.INSTALLER.replace('978AB84B', '978AB84C')),
+            'server': (self.IDENTITY_ZIG, self.INSTALLER.replace('toast-server', 'toast')),
+            'locked aumid': (self.IDENTITY_ZIG.replace('"gx0404.GhosttyGX"', '"gx0404.Ghostty"'), self.INSTALLER),
+            'manifest': (self.IDENTITY_ZIG.replace('local_server_argument = server_argument',
+                                                   'local_server_argument = profile_argument'), self.INSTALLER),
+            'no manifest': (self.IDENTITY_ZIG.replace('pub const manifest', 'const manifest'), self.INSTALLER),
+        }
+        for name, (identity, installer) in mismatches.items():
+            with self.subTest(name), self.assertRaises(SystemExit):
+                self.run_shell_identity_check(identity, installer)
 
 if __name__ == '__main__':
     unittest.main()

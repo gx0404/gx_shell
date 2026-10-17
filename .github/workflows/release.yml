@@ -104,6 +104,41 @@ jobs:
                                capture_output=True, text=True).stdout.strip()
           if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", zig):
               raise SystemExit("Ghostty GX must pin an exact Zig version")
+          # The installer hard-codes Ghostty GX's Windows shell identity (AUMID, toast activator CLSID and
+          # LocalServer32 argument); they must be the installed constants exported by the locked revision.
+          identity = (ghostty / "src/apprt/win32/shell/Identity.zig").read_text(encoding="utf-8")
+          strings = dict(re.findall(r'^pub const ([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"\\]*)"\s*;', identity, re.M))
+          exported = re.search(r'^pub const manifest\s*=\s*\.\{(.*?)\}\s*;', identity, re.M | re.S)
+          if exported is None:
+              raise SystemExit("Ghostty GX Identity.zig no longer exports the shell registration manifest")
+          fields = {}
+          for field, value in re.findall(r'\.([a-z_]+)\s*=\s*("[^"\\]*"|[A-Za-z_][A-Za-z0-9_]*)', exported.group(1)):
+              fields[field] = value[1:-1] if value.startswith('"') else strings.get(value)
+          shell = {"aumid": fields.get("aumid"), "activator": fields.get("activator_clsid"),
+                   "server": fields.get("local_server_argument")}
+          if (shell["aumid"] != strings.get("installed_aumid") or shell["activator"] != strings.get("installed_activator")
+                  or shell["server"] != strings.get("server_argument")):
+              raise SystemExit("Ghostty GX shell manifest differs from its installed identity constants")
+          if not re.fullmatch(r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+", shell["aumid"] or ""):
+              raise SystemExit("Ghostty GX installed AUMID is malformed")
+          if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", shell["activator"] or ""):
+              raise SystemExit("Ghostty GX toast activator must be a lowercase CLSID")
+          if not re.fullmatch(r"--gx-shell-action=[a-z][a-z-]*", shell["server"] or ""):
+              raise SystemExit("Ghostty GX LocalServer32 argument is malformed")
+          installer = Path("packaging/windows/gx-shell.iss").read_text(encoding="utf-8-sig")
+          vendor = shell["aumid"].split(".")[0]
+          aumids = set(re.findall(r"(?<![A-Za-z0-9.])" + re.escape(vendor) + r"(?:\.[A-Za-z0-9]+)+", installer))
+          if aumids != {shell["aumid"]}:
+              raise SystemExit(f"GX Shell installer AUMID {sorted(aumids)} differs from Ghostty GX {shell['aumid']}")
+          if shell["activator"] not in installer.lower():
+              raise SystemExit(f"GX Shell installer does not register toast activator {shell['activator']}")
+          guid = r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+          activators = {value.lower() for line in installer.splitlines() if re.search(r"(?i)clsid|activator", line)
+                        for value in re.findall(guid, line)}
+          if not activators <= {shell["activator"]}:
+              raise SystemExit(f"GX Shell installer activator CLSID {sorted(activators)} differs from Ghostty GX")
+          if shell["server"] not in installer:
+              raise SystemExit(f"GX Shell installer LocalServer32 lacks {shell['server']}")
           version_string = build.ghostty_version_string(ghostty, dict(os.environ))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               for name, value in (("lock_digest", digest), ("rust", rust), ("zig", zig),
