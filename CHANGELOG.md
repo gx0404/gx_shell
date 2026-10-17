@@ -12,10 +12,11 @@ GitHub Release 说明，只写面向用户的变化；验收过程与内部记�
 
 本版把随包的 Ghostty GX 更新到 0.0.3 的开发修订、herdr 更新到 fork 的最新修订，并让 Windows 安装程序登记 Ghostty GX
 的系统通知身份。组件为 Ghostty GX 0.0.3 的未发布修订（`ac064c31`，未打 tag）、herdr 0.9.3 加 fork 尚未发布的改动
-（`fe54d5ff`）与 Oh My Zsh GX `53da420d`（只把依赖锁里的 herdr 换成同一修订，GX Zsh 本身不变）。**本段是发布前草稿**：
-发布前须在 GitHub Actions 上完成与 0.4.1 相同的两平台构建与测试（含 Ghostty GX 的打包契约与核心测试、Oh My Zsh GX 在
-真实 Zsh 与伪终端上的测试）、Windows 一次性 runner 上的安装—使用—同版本重装—卸载冒烟、Ubuntu 24.04 干净容器里的
-DEB 冒烟，以及两平台产物的来源与散列核对，定版时按实际结果改写本段。硬件 GPU 窗口、桌面输入、系统通知的实际显示与
+（`fe54d5ff`）与 Oh My Zsh GX `53da420d`（只把依赖锁里的 herdr 换成同一修订，GX Zsh 本身不变）。**本段是发布前草稿**（标题为 `(TBD)`）：
+手动验收（`publish=false`）已在 GitHub Actions 上完成与 0.4.1 相同的两平台构建与测试（含 Ghostty GX 的打包契约与核心测试、
+Oh My Zsh GX 在真实 Zsh 与伪终端上的测试）：Windows 安装包在一次性的 Windows runner 上完成安装、使用（Ghostty GX 用随包的
+Mesa 软件渲染打开 GX Zsh）、同版本重装、卸载与再次安装的冒烟，并核对了通知身份的注册表项与快捷方式；DEB 在 Ubuntu 24.04
+的干净容器里完成安装、运行、重装、移除与清除；两平台产物的来源与散列核对无误。定版发布时须在发布 run 上重新通过。硬件 GPU 窗口、桌面输入、系统通知的实际显示与
 旧版升级不在 CI 验证范围内，见「已知限制」。
 
 ### Ghostty GX 0.0.3（未发布修订）

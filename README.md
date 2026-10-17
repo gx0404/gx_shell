@@ -14,8 +14,8 @@ Windows 上 Ghostty GX 默认进入 GX Zsh，Ubuntu 上用 `ghostty-gx -e gx-zsh
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
 **0.5.0 正在准备，尚未发布**：CHANGELOG 为 `0.5.0(TBD)`，来源锁改为 Ghostty GX 0.0.3 的未打 tag 修订 `ac064c31` 与 herdr
-`fe54d5ff`（ohmyzsh 待其依赖锁跟进后填入），Windows 安装程序新增 Ghostty GX 通知身份的登记；构建与两平台验收都还没有
-运行，见「本轮快照与当前待验证项」。0.4.1（2026-10-10）把 Ghostty GX 更新到 0.0.2，来源锁的 gx_ghostty 换成其发布
+`fe54d5ff`、Oh My Zsh GX `53da420d`，Windows 安装程序新增 Ghostty GX 通知身份的登记；手动验收 run `39068351898`
+（`publish=false`）已完成两平台构建与冒烟，见「本轮快照与当前待验证项」。0.4.1（2026-10-10）把 Ghostty GX 更新到 0.0.2，来源锁的 gx_ghostty 换成其发布
 提交 `1be3d19f`，herdr 与 Oh My Zsh GX 不变；没有先单独跑手动验收，由 tag `gx-shell-v0.4.1` 触发的 release.yml（run
 `38009098652`）完成同一套构建与两平台验收后发布。0.4.0（2026-10-10）用 Ghostty GX 取代 WezTerm GX，来源锁钉 Ghostty GX 0.0.1 的发布提交；
 发布前先手动运行 release.yml（run `37973258654`，publish=false）完成两平台整包验收，再由 tag `gx-shell-v0.4.0` 触发
@@ -454,7 +454,7 @@ stage 回执与完整清单；文件缺失、内容变动、来源错配或冲�
 0.3.0 已由 tag `gx-shell-v0.3.0` 触发 release.yml（run `37027305037`）完整构建、验收并发布。0.4.0 先经手动
 `publish=false` 的 run `37973258654` 完成两平台整包验收，再由 tag `gx-shell-v0.4.0` 触发 release.yml（run
 `37980632775`）完整构建、验收并发布。0.4.1 没有先跑手动验收，由 tag `gx-shell-v0.4.1` 触发的 release.yml（run
-`38009098652`）完成同一套构建与两平台验收后发布。0.5.0 还没有运行 release.yml，CHANGELOG 仍为 `(TBD)`。门禁如下：
+`38009098652`）完成同一套构建与两平台验收后发布。0.5.0 已用手动验收 run `39068351898`（`publish=false`）跑通 release.yml，尚未发布，CHANGELOG 仍为 `(TBD)`。门禁如下：
 
 1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
    digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
@@ -509,7 +509,7 @@ Windows 在根目录可运行
 以下为目标路线。0.3.0（WezTerm GX）的最终锁 run `36998777427` 完成过路线 1 与路线 2；0.4.0（Ghostty GX）的最终锁
 （gx_ghostty 发布提交 `5525f8bc`）在手动验收 run `37973258654` 与发布 run `37980632775` 上都完成了路线 1 与路线 2；
 0.4.1 的最终锁（gx_ghostty 发布提交 `1be3d19f`）在发布 run `38009098652` 上完成了路线 1 与路线 2；0.5.0 的锁（gx_ghostty
-`ac064c31`）尚未运行任何路线。**路线 3 的硬件 GPU 仍受阻**，
+`ac064c31`）在手动验收 run `39068351898` 上完成了路线 1 与路线 2。**路线 3 的硬件 GPU 仍受阻**，
 结果见下节：
 
 1. **GitHub-hosted Windows**：生成完整 payload，用 Inno Setup 7.1 编译安装器，再以
@@ -530,10 +530,10 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 ### 本轮快照与当前待验证项
 
-#### 0.5.0 准备：Ghostty GX `ac064c31`、herdr `fe54d5ff` 与通知身份登记（2026-10-18，未发布）
+#### 0.5.0 准备：Ghostty GX `ac064c31`、herdr `fe54d5ff` 与通知身份登记（2026-10-18，CI 验收通过，未发布）
 
-本轮还没有定版、提交、打 tag 或发布，CHANGELOG 新增的 `## 0.5.0(TBD)` 段是发布前草稿，`(TBD)` 会阻止发布。以下只记录
-当前工作区的状态；构建、测试与两平台验收都还没有运行，全部是 PENDING，CI 运行后按实际结果补记，不能把下表当作验收结论。
+本轮没有定版、打 tag 或发布，CHANGELOG 的 `## 0.5.0(TBD)` 段是发布前草稿，`(TBD)` 会阻止发布。改动已提交并推送到
+`main`，以手动验收 run `39068351898`（`publish=false`）完成两平台构建与验收；下表按该 run 与本地命令的实际结果记录。
 
 - **来源锁**：herdr `fe54d5ff3050f503815a99140384c1e18a95fbbb`（`Cargo.toml` 仍为 0.9.3，带 fork CHANGELOG
   「Unreleased」的改动）、gx_ghostty `ac064c31d3c4d0411c6ef7c72fff0e8c2f853ebb`（未打 tag，fork CHANGELOG 的 `0.0.3(TBD)`
@@ -560,18 +560,20 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
   `scripts/gx_shell_setup.*` 把 CPython 3.12.12、actionlint 1.7.12 与 Inno Setup 7.1 钉版装进 `.local/tools`。在沙箱内用这套工具：
   根单测 Ran 260，OK（skipped=10，含 2 项因当时未加载 `ISCC`），随后单独加载 `ISCC` 重跑这 2 项 Inno Setup 夹具编译用例
   均通过；`actionlint .github/workflows/release.yml` 通过；`gx_shell_sources.py check` 与 `--require-remote` 通过；
-  `git diff --check` 干净。两平台构建与冒烟仍待 CI。
+  `git diff --check` 干净。锁改为 `ac064c31` 后的完整验收 run 39068351898（`publish=false`，coordinator `140c4af1`）全部 job
+  成功，`verify` 写出 0.5.0 两平台 6 个文件的 `SHA256SUMS`；Windows 与 Ubuntu 24.04 的软件渲染截图已逐张读图，都是 Ghostty GX
+  打开 GX Zsh 的提示符。
 
 | 项目 | 0.5.0 当前边界 |
 |---|---|
-| 来源锁 | PASS（本地）：herdr `fe54d5ff`、ohmyzsh `53da420d`、gx_ghostty `ac064c31`，digest `9a35509e…`，`check` 与 `check --require-remote` 通过 |
-| 根测试 / workflow 静态检查 | PASS（本地）：根单测 Ran 260，OK（skipped=10）；Inno Setup 7.1 夹具编译 2 项单独通过；`release.yml` 新增通知身份比对，actionlint 1.7.12 通过 |
-| `gx-shell.iss`（通知身份） | 编译 PASS（Inno Setup 7.1 夹具）；安装冒烟对登记、快捷方式 AUMID 与卸载删除的验证 PENDING（CI） |
-| Ghostty GX stage 与测试（CI） | PENDING：`ghostty-windows`、`ghostty-linux`、`ghostty-tests` 未运行 |
-| shell stage / Windows 整包 / DEB | PENDING：herdr `fe54d5ff` 的 shell stage、组装、安装器与 DEB 均未构建 |
-| `verify`（两平台 provenance 与散列） | PENDING |
-| Windows 安装生命周期 / 软件渲染窗口 | PENDING：须在一次性 runner 上运行并人工审阅截图 |
-| DEB 构建与 Ubuntu 24.04 冒烟 | PENDING |
+| 来源锁 | PASS：herdr `fe54d5ff`、ohmyzsh `53da420d`、gx_ghostty `ac064c31`，digest `9a35509e…`，本地 `check` 与 `check --require-remote` 通过，run 39068351898 的 prepare 来源绑定与通知身份比对通过 |
+| 根测试 / workflow 静态检查 | PASS：本地根单测 Ran 260，OK（skipped=10），Inno Setup 夹具编译 2 项单独通过；`package-windows` 用 Inno Setup 7.1 Ran 260，OK（skipped=8）；actionlint 1.7.12 通过 |
+| `gx-shell.iss`（通知身份） | PASS：一次性 runner 上真实安装后 AUMID、CLSID LocalServer32 与两个开始菜单快捷方式的 AUMID/激活器 CLSID 均正确，重装后不变，卸载后两键删除（`*-shell-identity.json` 证据） |
+| Ghostty GX stage 与测试（CI） | PASS：`ghostty-windows`、`ghostty-linux` 成功；`ghostty-tests` 契约测试 Ran 104 OK，`-Dapp-runtime=none` 核心测试 4377 passed、52 skipped（`70ed6976` 时此项编译失败，已在 gx_ghostty 修复） |
+| shell stage / Windows 整包 / DEB | PASS：`shell-windows`、`shell-linux`、`ohmyzsh-posix`、`package-windows`、`package-linux` 成功 |
+| `verify`（两平台 provenance 与散列） | PASS：`SHA256SUMS` 列出 `GX-Shell-0.5.0-Setup-x64.exe`（`eff38188…`）、`gx-shell_0.5.0_amd64.deb`（`265be305…`）及各自 manifest 与源码包 |
+| Windows 安装生命周期 / 软件渲染窗口 | PASS：安装、使用、被占用时拒绝、同版本重装、卸载与再次安装；3 张截图已读，Ghostty GX（Mesa 软件渲染）打开 GX Zsh |
+| DEB 构建与 Ubuntu 24.04 冒烟 | PASS：`smoke-linux (24.04)` 安装、运行、重装、移除与清除；截图已读，Xvfb 下 Ghostty GX 打开 GX Zsh |
 | 系统通知实际显示 / 跳转列表 | 不在 CI 范围：Ghostty GX 自己的安装版实测中早期有三次通知未显示，原因未定位 |
 | 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT`，`ac064c31` 尚未重新审计 |
 | 桌面输入 / 拖放 / 跨进程拖动标签 / UI Automation | 未验证 |
