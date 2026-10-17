@@ -9,3 +9,8 @@
 /.ui-evidence/
 __pycache__/
 *.pyc
+# 迁移前 subtree 单仓遗留的组件源码与编译产物（target/、cache/、zig-pkg 等）；它们不再是构建输入，
+# 组件源码只放 .local/sources/<component>，不得重新加入版本库。
+/herdr/
+/ohmyzsh/
+/wezterm/
