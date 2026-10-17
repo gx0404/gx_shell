@@ -25,6 +25,9 @@
 #ifndef GxFontNames
   #error GxFontNames is required
 #endif
+; Windows Shell identity from gx_ghostty src/apprt/win32/shell/Identity.zig.
+#define GxAumid "gx0404.GhosttyGX"
+#define GxToastClsid "978ab84b-3cac-4593-95d5-2e04d68eed4f"
 
 [Setup]
 AppId={{EDDE7553-FF3A-4F95-B9A5-E4D037FEE617}
@@ -77,6 +80,8 @@ english.OwnedElsewhere=Uninstall the existing GX Shell before changing its direc
 chinesesimplified.OwnedElsewhere=请先卸载现有的 GX Shell 再更换安装目录，用户配置会保留。
 english.UnownedDirectory=Refusing to install over a non-empty directory that GX Shell does not own.
 chinesesimplified.UnownedDirectory=目标目录非空且不属于 GX Shell，已拒绝安装。
+english.ShellIdentityInUse=Existing Ghostty GX notification identity entries do not belong to this GX Shell installation. Resolve the conflicting entries or uninstall their owner before retrying.
+chinesesimplified.ShellIdentityInUse=已有的 Ghostty GX 通知身份注册项不属于此 GX Shell 安装。请先处理冲突或卸载其所属程序，再重试。
 english.BusyFiles=Close Ghostty GX (and the WezTerm GX of an earlier GX Shell) and GX Zsh, run "herdr server stop", then retry. No processes will be terminated. In-use or unsafe file: %1
 chinesesimplified.BusyFiles=请关闭 Ghostty GX（以及旧版 GX Shell 自带的 WezTerm GX）和 GX Zsh 并运行 herdr server stop 后重试，安装程序不会结束任何进程。被占用或不安全的文件：%1
 english.HerdrConflictSilent=An existing herdr command conflicts: %1. Resolve it before unattended installation.
@@ -108,9 +113,18 @@ Source: "{#GxPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 ; Ghostty GX starts GX Zsh by default because {app}\bin\gx-zsh.exe sits next to its directory. The GX Zsh
 ; shortcut runs GX Zsh in the first tab even when another default shell is configured: -e takes the quoted
 ; path as one argument without shell parsing, so a profile path with spaces still works.
-Name: "{autoprograms}\Ghostty GX"; Filename: "{app}\ghostty\ghostty.exe"; WorkingDir: "{%USERPROFILE}"
-Name: "{autoprograms}\GX Zsh"; Filename: "{app}\ghostty\ghostty.exe"; Parameters: "-e ""{app}\bin\gx-zsh.exe"""; WorkingDir: "{%USERPROFILE}"; IconFilename: "{app}\bin\gx-zsh.exe"
-Name: "{autodesktop}\Ghostty GX"; Filename: "{app}\ghostty\ghostty.exe"; WorkingDir: "{%USERPROFILE}"; Tasks: desktopicon
+Name: "{autoprograms}\Ghostty GX"; Filename: "{app}\ghostty\ghostty.exe"; WorkingDir: "{%USERPROFILE}"; AppUserModelID: "{#GxAumid}"; AppUserModelToastActivatorCLSID: "{#GxToastClsid}"
+Name: "{autoprograms}\GX Zsh"; Filename: "{app}\ghostty\ghostty.exe"; Parameters: "-e ""{app}\bin\gx-zsh.exe"""; WorkingDir: "{%USERPROFILE}"; IconFilename: "{app}\bin\gx-zsh.exe"; AppUserModelID: "{#GxAumid}"; AppUserModelToastActivatorCLSID: "{#GxToastClsid}"
+Name: "{autodesktop}\Ghostty GX"; Filename: "{app}\ghostty\ghostty.exe"; WorkingDir: "{%USERPROFILE}"; AppUserModelID: "{#GxAumid}"; AppUserModelToastActivatorCLSID: "{#GxToastClsid}"; Tasks: desktopicon
+
+[Registry]
+; PrepareToInstall checks ownership after standalone components have been uninstalled.
+; No automatic uninstall deletion: RemoveOwnedShellIdentity checks current ownership.
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#GxAumid}"; ValueType: string; ValueName: "GxExecutable"; ValueData: "{app}\ghostty\ghostty.exe"
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#GxAumid}"; ValueType: string; ValueName: "CustomActivator"; ValueData: "{{{#GxToastClsid}}"
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#GxAumid}"; ValueType: string; ValueName: "DisplayName"; ValueData: "Ghostty GX"
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#GxAumid}"; ValueType: string; ValueName: "IconUri"; ValueData: "{app}\ghostty\ghostty.exe"
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{{#GxToastClsid}}\LocalServer32"; ValueType: string; ValueData: """{app}\ghostty\ghostty.exe"" --gx-shell-action=toast-server"
 
 [Run]
 Filename: "{app}\ghostty\ghostty.exe"; Description: "{cm:LaunchProgram,Ghostty GX}"; WorkingDir: "{%USERPROFILE}"; Flags: nowait postinstall skipifsilent runasoriginaluser
@@ -118,6 +132,9 @@ Filename: "{app}\ghostty\ghostty.exe"; Description: "{cm:LaunchProgram,Ghostty G
 [Code]
 const
   OwnerKey = 'Software\GX Shell';
+  GxAumidKey = 'Software\Classes\AppUserModelId\{#GxAumid}';
+  GxClsidKey = 'Software\Classes\CLSID\{{#GxToastClsid}}';
+  GxActivator = '{{#GxToastClsid}}';
   FontKey = 'Software\Microsoft\Windows NT\CurrentVersion\Fonts';
   EnvironmentKey = 'Environment';
   UninstallRoot = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\';
@@ -172,6 +189,48 @@ begin
   P := Pos(';', Value);
   if P = 0 then begin Result := Value; Value := ''; end
   else begin Result := Copy(Value, 1, P - 1); Delete(Value, 1, P); end;
+end;
+
+function GxExpectedServer: String;
+begin
+  Result := '"' + ExpandConstant('{app}\ghostty\ghostty.exe') + '" --gx-shell-action=toast-server';
+end;
+
+function GxRegisteredValueMatches(const Key, Name, Expected: String): Boolean;
+var Value: String;
+begin
+  Result := RegQueryStringValue(HKCU, Key, Name, Value) and
+    (CompareText(Value, Expected) = 0);
+end;
+
+function GxOwnsShellRegistration: Boolean;
+begin
+  { Compare complete values, never directory prefixes or basenames. A partial registration
+    is not proof of ownership. Include display values so foreign changes are not overwritten. }
+  Result := GxRegisteredValueMatches(GxAumidKey, 'GxExecutable', ExpandConstant('{app}\ghostty\ghostty.exe')) and
+    GxRegisteredValueMatches(GxAumidKey, 'CustomActivator', GxActivator) and
+    GxRegisteredValueMatches(GxAumidKey, 'DisplayName', 'Ghostty GX') and
+    GxRegisteredValueMatches(GxAumidKey, 'IconUri', ExpandConstant('{app}\ghostty\ghostty.exe')) and
+    GxRegisteredValueMatches(GxClsidKey + '\LocalServer32', '', GxExpectedServer);
+end;
+
+procedure GxDeleteOwnedValue(const Key, Name, Expected: String);
+begin
+  if GxRegisteredValueMatches(Key, Name, Expected) then
+    RegDeleteValue(HKCU, Key, Name);
+end;
+
+procedure RemoveOwnedShellIdentity;
+begin
+  if not GxOwnsShellRegistration then exit;
+  GxDeleteOwnedValue(GxClsidKey + '\LocalServer32', '', GxExpectedServer);
+  RegDeleteKeyIfEmpty(HKCU, GxClsidKey + '\LocalServer32');
+  RegDeleteKeyIfEmpty(HKCU, GxClsidKey);
+  GxDeleteOwnedValue(GxAumidKey, 'CustomActivator', GxActivator);
+  GxDeleteOwnedValue(GxAumidKey, 'DisplayName', 'Ghostty GX');
+  GxDeleteOwnedValue(GxAumidKey, 'IconUri', ExpandConstant('{app}\ghostty\ghostty.exe'));
+  GxDeleteOwnedValue(GxAumidKey, 'GxExecutable', ExpandConstant('{app}\ghostty\ghostty.exe'));
+  RegDeleteKeyIfEmpty(HKCU, GxAumidKey);
 end;
 
 function EntryCount(Value, Entry: String): Integer;
@@ -345,6 +404,12 @@ begin
   end;
   Result := RemoveLegacyInstallations;
   if Result <> '' then exit;
+  { A previous GX Shell install is accepted only at the same directory (checked above).
+    The standalone Ghostty GX uninstaller must remove its identity before this check. }
+  if (RegKeyExists(HKCU, GxAumidKey) or RegKeyExists(HKCU, GxClsidKey)) and
+     not GxOwnsShellRegistration then begin
+    Result := CustomMessage('ShellIdentityInUse'); exit;
+  end;
   Conflict := ResolvedHerdr;
   if (Conflict <> '') and (NormalizeEntry(Conflict) <> NormalizeEntry(ExpandConstant('{app}\bin\herdr.exe'))) then begin
     if WizardSilent then begin
@@ -647,6 +712,7 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then begin
     KeepForeignWezTerm;
+    RemoveOwnedShellIdentity;
     RemoveOwnedPath;
     Fonts(False);
     UnregisterAppPath;

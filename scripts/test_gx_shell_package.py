@@ -1056,11 +1056,106 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn(r'IconFilename: "{app}\bin\gx-zsh.exe"', zsh)
         for entry in (ghostty, zsh, self.icon(r"{autodesktop}\Ghostty GX")):
             self.assertIn(r'WorkingDir: "{%USERPROFILE}"', entry)
+            self.assertIn('AppUserModelID: "{#GxAumid}"', entry)
+            self.assertIn('AppUserModelToastActivatorCLSID: "{#GxToastClsid}"', entry)
         self.assertTrue(self.icon(r"{autodesktop}\Ghostty GX").endswith("Tasks: desktopicon"))
         self.assertIn(r"UninstallDisplayIcon={app}\ghostty\ghostty.exe", self.iss)
         self.assertIn(r'Filename: "{app}\ghostty\ghostty.exe"; Description: "{cm:LaunchProgram,Ghostty GX}"', self.iss)
-        self.assertNotIn("[Registry]", self.iss)
         self.assertNotIn("wezterm-gx.exe\"", self.iss)
+
+    def test_shell_identity_registry_is_per_user_and_targets_the_bundled_exe(self):
+        self.assertIn('#define GxAumid "gx0404.GhosttyGX"', self.iss)
+        self.assertIn('#define GxToastClsid "978ab84b-3cac-4593-95d5-2e04d68eed4f"', self.iss)
+        section = re.search(r"^\[Registry\]\n(.*?)(?=^\[)", self.iss, re.M | re.S).group(1)
+        entries = re.findall(r"^Root:.*$", section, re.M)
+        aumid = r'Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#GxAumid}"; ValueType: string; '
+        self.assertEqual(entries, [
+            aumid + r'ValueName: "GxExecutable"; ValueData: "{app}\ghostty\ghostty.exe"',
+            aumid + 'ValueName: "CustomActivator"; ValueData: "{{{#GxToastClsid}}"',
+            aumid + 'ValueName: "DisplayName"; ValueData: "Ghostty GX"',
+            aumid + r'ValueName: "IconUri"; ValueData: "{app}\ghostty\ghostty.exe"',
+            r'Root: HKCU; Subkey: "Software\Classes\CLSID\{{{#GxToastClsid}}\LocalServer32"; '
+            r'ValueType: string; ValueData: """{app}\ghostty\ghostty.exe"" --gx-shell-action=toast-server"',
+        ])
+        # Registry-section constants escape the leading brace; Pascal constants do not.
+        for declaration in (
+            r"GxAumidKey = 'Software\Classes\AppUserModelId\{#GxAumid}';",
+            r"GxClsidKey = 'Software\Classes\CLSID\{{#GxToastClsid}}';",
+            "GxActivator = '{{#GxToastClsid}}';",
+        ):
+            self.assertIn(declaration, self.code)
+        self.assertNotIn("uninsdelete", section.lower())
+
+    @unittest.skipUnless(os.name == "nt", "Windows command-line parser")
+    def test_toast_server_registration_quotes_the_bundled_executable(self):
+        server = re.search(r'^Root:.*LocalServer32";.*ValueData: "((?:[^"]|"")*)"$', self.iss, re.M)
+        self.assertIsNotNone(server)
+        for app in (r"C:\Users\gx\AppData\Local\Programs\GXShell",
+                    r"C:\Users\John Doe\AppData\Local\Programs\GXShell",
+                    r"C:\Users\测试 用户\AppData\Local\Programs\GXShell"):
+            with self.subTest(app=app):
+                command = server.group(1).replace('""', '"').replace("{app}", app)
+                self.assertEqual(windows_arguments(command),
+                                 [app + r"\ghostty\ghostty.exe", "--gx-shell-action=toast-server"])
+        expected = self.between("function GxExpectedServer:", "function GxRegisteredValueMatches(")
+        self.assertIn("Result := '\"' + ExpandConstant('{app}\\ghostty\\ghostty.exe') + "
+                      "'\" --gx-shell-action=toast-server';", expected)
+
+    def test_shell_identity_ownership_requires_all_five_complete_values(self):
+        matches = self.between("function GxRegisteredValueMatches(", "function GxOwnsShellRegistration:")
+        self.assertIn("Result := RegQueryStringValue(HKCU, Key, Name, Value) and", matches)
+        self.assertIn("(CompareText(Value, Expected) = 0)", matches)
+        owns = self.between("function GxOwnsShellRegistration:", "procedure GxDeleteOwnedValue(")
+        calls = [
+            r"GxRegisteredValueMatches(GxAumidKey, 'GxExecutable', ExpandConstant('{app}\ghostty\ghostty.exe'))",
+            "GxRegisteredValueMatches(GxAumidKey, 'CustomActivator', GxActivator)",
+            "GxRegisteredValueMatches(GxAumidKey, 'DisplayName', 'Ghostty GX')",
+            r"GxRegisteredValueMatches(GxAumidKey, 'IconUri', ExpandConstant('{app}\ghostty\ghostty.exe'))",
+            r"GxRegisteredValueMatches(GxClsidKey + '\LocalServer32', '', GxExpectedServer)",
+        ]
+        self.assertIn("Result := " + " and\n    ".join(calls) + ";", owns)
+        for forbidden in ("NormalizeEntry(", "Pos(", "ExtractFileName(", "HKLM", "HKA"):
+            self.assertNotIn(forbidden, matches + owns)
+
+    def test_shell_identity_conflicts_are_checked_after_legacy_uninstall(self):
+        prepare = self.between("function PrepareToInstall(", "procedure AddOwnedPath;")
+        steps = ("CustomMessage('OwnedElsewhere')", "Result := RemoveLegacyInstallations;",
+                 "if Result <> '' then exit;", "RegKeyExists(HKCU, GxAumidKey)",
+                 "not GxOwnsShellRegistration", "CustomMessage('ShellIdentityInUse'); exit;", "ResolvedHerdr")
+        positions = [prepare.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("(RegKeyExists(HKCU, GxAumidKey) or RegKeyExists(HKCU, GxClsidKey)) and", prepare)
+        self.assertIn("HasOwner and (NormalizeEntry(ExistingOwner) <> NormalizeEntry(ExpandConstant('{app}')))",
+                      prepare)
+        guard = prepare[prepare.index("if (RegKeyExists(HKCU, GxAumidKey)"):prepare.index("Conflict :=")]
+        self.assertNotIn("WizardSilent", guard)
+        for language in ("english", "chinesesimplified"):
+            self.assertRegex(self.iss, rf"(?m)^{language}\.ShellIdentityInUse=.+$")
+
+    def test_shell_identity_uninstall_preserves_foreign_values_and_nonempty_keys(self):
+        delete = self.between("procedure GxDeleteOwnedValue(", "procedure RemoveOwnedShellIdentity;")
+        self.assertIn("if GxRegisteredValueMatches(Key, Name, Expected) then\n"
+                      "    RegDeleteValue(HKCU, Key, Name);", delete)
+        remove = self.between("procedure RemoveOwnedShellIdentity;", "function EntryCount(")
+        self.assertLess(remove.index("if not GxOwnsShellRegistration then exit;"),
+                        remove.index("GxDeleteOwnedValue("))
+        for call in (
+            r"GxDeleteOwnedValue(GxClsidKey + '\LocalServer32', '', GxExpectedServer);",
+            "GxDeleteOwnedValue(GxAumidKey, 'CustomActivator', GxActivator);",
+            "GxDeleteOwnedValue(GxAumidKey, 'DisplayName', 'Ghostty GX');",
+            r"GxDeleteOwnedValue(GxAumidKey, 'IconUri', ExpandConstant('{app}\ghostty\ghostty.exe'));",
+            r"GxDeleteOwnedValue(GxAumidKey, 'GxExecutable', ExpandConstant('{app}\ghostty\ghostty.exe'));",
+            r"RegDeleteKeyIfEmpty(HKCU, GxClsidKey + '\LocalServer32');",
+            "RegDeleteKeyIfEmpty(HKCU, GxClsidKey);",
+            "RegDeleteKeyIfEmpty(HKCU, GxAumidKey);",
+        ):
+            self.assertIn(call, remove)
+        for forbidden in ("RegDeleteKeyIncludingSubkeys", "RegDeleteValue(", "HKLM", "HKA"):
+            self.assertNotIn(forbidden, remove)
+        uninstall = self.code[self.code.index("procedure CurUninstallStepChanged"):]
+        self.assertLess(uninstall.index("if CurUninstallStep = usUninstall then begin"),
+                        uninstall.index("RemoveOwnedShellIdentity;"))
+        self.assertLess(uninstall.index("RemoveOwnedShellIdentity;"), uninstall.index("usPostUninstall"))
 
     @unittest.skipUnless(os.name == "nt", "Windows command-line parser")
     def test_gx_zsh_shortcut_passes_the_path_as_one_argument(self):

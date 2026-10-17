@@ -1,5 +1,6 @@
 # GX Shell installer lifecycle smoke for a disposable GitHub-hosted Windows runner:
-# silent install, PATH commands, the Ghostty GX and GX Zsh Start-menu shortcuts, GX Zsh (nested shell
+# silent install, PATH commands, the Ghostty GX and GX Zsh Start-menu shortcuts, the Windows Shell identity of
+# Ghostty GX (AppUserModelID, toast COM local server, shortcut AUMID; idempotent and removed), GX Zsh (nested shell
 # paths, /tmp, passwd home, zoxide data, bundled Linux tools, PowerShell bridge, app execution alias),
 # the GX-managed herdr configuration, herdr identity / managed update / completion / real Zsh pane on
 # the bundled ConPTY with Ctrl+C for MSYS and native programs, the bundled fonts, Ghostty GX starting
@@ -368,6 +369,13 @@ $ghosttyExe = Join-Path $app 'ghostty\ghostty.exe'
 $gxZshExe = Join-Path $app 'bin\gx-zsh.exe'
 $appPathKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\ghostty.exe'
 $oldAppPathKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\wezterm-gx.exe'
+# The Windows Shell identity of Ghostty GX: toasts carry this AppUserModelID, and activating one starts the
+# registered COM local server through the shortcuts that carry the same AUMID and ToastActivatorCLSID.
+$shellAumid = 'gx0404.GhosttyGX'
+$toastClsid = '{978ab84b-3cac-4593-95d5-2e04d68eed4f}'
+$aumidKey = "HKCU:\Software\Classes\AppUserModelId\$shellAumid"
+$toastClsidKey = "HKCU:\Software\Classes\CLSID\$toastClsid"
+$toastServerKey = "$toastClsidKey\LocalServer32"
 # "Ghostty GX" relies on Ghostty GX finding {app}\bin\gx-zsh.exe next to its directory; "GX Zsh" names GX Zsh
 # explicitly with -e, so it opens GX Zsh even when another default shell is configured.
 function Assert-Shortcuts([string]$Label) {
@@ -375,6 +383,138 @@ function Assert-Shortcuts([string]$Label) {
     Assert ($ghostty.TargetPath -ieq $ghosttyExe -and $ghostty.Arguments -eq '' -and $ghostty.WorkingDirectory -ieq $env:USERPROFILE) "${Label}: Ghostty GX shortcut runs: $($ghostty.TargetPath) $($ghostty.Arguments)"
     $zsh = Shortcut (Join-Path $programs 'GX Zsh.lnk')
     Assert ($zsh.TargetPath -ieq $ghosttyExe -and $zsh.Arguments -ieq "-e `"$gxZshExe`"" -and $zsh.WorkingDirectory -ieq $env:USERPROFILE) "${Label}: GX Zsh shortcut runs: $($zsh.TargetPath) $($zsh.Arguments)"
+}
+# WScript.Shell cannot see the AppUserModel properties of a shortcut; read them from its shell property store.
+function Initialize-ShortcutProperties {
+    if ('GxSmokeShortcutProperties' -as [type]) { return }
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class GxSmokeShortcutProperties {
+    [StructLayout(LayoutKind.Sequential, Pack = 4)] struct PropertyKey { public Guid FormatId; public uint PropertyId; }
+    [StructLayout(LayoutKind.Sequential)] struct PropVariant { public ushort Type, Reserved1, Reserved2, Reserved3; public IntPtr Value, Value2; }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPropertyStore {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, out PropertyKey key);
+        [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant value);
+        [PreserveSig] int SetValue(ref PropertyKey key, ref PropVariant value);
+        [PreserveSig] int Commit();
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    static extern void SHGetPropertyStoreFromParsingName(string path, IntPtr bindContext, int flags, ref Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IPropertyStore store);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropVariant value);
+    // PKEY_AppUserModel_ID is (this, 5); PKEY_AppUserModel_ToastActivatorCLSID is (this, 26).
+    static readonly Guid AppUserModel = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
+
+    static string Property(IPropertyStore store, uint id) {
+        var key = new PropertyKey { FormatId = AppUserModel, PropertyId = id };
+        PropVariant value;
+        Marshal.ThrowExceptionForHR(store.GetValue(ref key, out value));
+        try {
+            switch (value.Type) {
+                case 0: return null; // VT_EMPTY: the shortcut does not carry the property
+                case 31: return Marshal.PtrToStringUni(value.Value); // VT_LPWSTR
+                case 72: return "{" + Marshal.PtrToStructure<Guid>(value.Value).ToString() + "}"; // VT_CLSID
+                default: throw new InvalidOperationException("AppUserModel property " + id + " has PROPVARIANT type " + value.Type);
+            }
+        } finally { PropVariantClear(ref value); }
+    }
+    // Returns { AppUserModelID, ToastActivatorCLSID }; a missing property is null. GPS_DEFAULT opens read-only.
+    public static string[] Read(string path) {
+        if (!System.IO.Path.IsPathFullyQualified(path)) throw new ArgumentException("Shortcut must be an absolute path");
+        var riid = typeof(IPropertyStore).GUID;
+        IPropertyStore store;
+        SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 0, ref riid, out store);
+        try { return new[] { Property(store, 5), Property(store, 26) }; }
+        finally { Marshal.ReleaseComObject(store); }
+    }
+}
+"@
+}
+function Shortcut-Identity([string]$Path) {
+    $record = [ordered]@{ Path = $Path; Exists = (Test-Path -LiteralPath $Path -PathType Leaf); AppUserModelId = $null; ToastActivatorClsid = $null }
+    if ($record.Exists) {
+        Initialize-ShortcutProperties
+        $values = [GxSmokeShortcutProperties]::Read($Path)
+        $record.AppUserModelId, $record.ToastActivatorClsid = $values[0], $values[1]
+    }
+    return [pscustomobject]$record
+}
+# Name -> @{ Kind; Value } of a registry key's values (the default value is ''), or $null when the key is absent.
+function Registry-Entries([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $key = Get-Item -LiteralPath $Path
+    try {
+        $entries = @{}
+        foreach ($name in $key.GetValueNames()) {
+            $entries[$name] = [pscustomobject]@{ Kind = $key.GetValueKind($name).ToString(); Value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+        }
+        return $entries
+    } finally { $key.Dispose() }
+}
+# Paths compare after normalization and case-insensitively, like Windows resolves them.
+function Same-Path([string]$Actual, [string]$Expected) {
+    if (-not $Actual) { return $false }
+    try { return [IO.Path]::GetFullPath($Actual).TrimEnd('\') -ieq [IO.Path]::GetFullPath($Expected).TrimEnd('\') }
+    catch { return $false }
+}
+# Every way the registered AUMID, the toast COM local server or the shortcuts differ from what the installer owns.
+function ShellIdentity-Problems($Identity, $Server, [object[]]$Links) {
+    $problems = [Collections.Generic.List[string]]::new()
+    $where = "AppUserModelId\$shellAumid"
+    if ($null -eq $Identity) { $problems.Add("$where is not registered") }
+    else {
+        $expected = [ordered]@{ GxExecutable = $ghosttyExe; CustomActivator = $toastClsid; DisplayName = 'Ghostty GX'; IconUri = $ghosttyExe }
+        $extra = @($Identity.Keys | Where-Object { -not $expected.Contains($_) } | Sort-Object)
+        if ($extra.Count) { $problems.Add("$where has unexpected values: $($extra -join ', ')") }
+        foreach ($name in $expected.Keys) {
+            if (-not $Identity.ContainsKey($name)) { $problems.Add("$where lacks $name"); continue }
+            $entry = $Identity[$name]
+            $value = [string]$entry.Value
+            $same = switch ($name) {
+                'CustomActivator' { $value -ieq $toastClsid }
+                'DisplayName' { $value -ceq 'Ghostty GX' }
+                default { Same-Path $value $ghosttyExe }
+            }
+            if ($entry.Kind -cne 'String' -or -not $same) { $problems.Add("$where $name is $($entry.Kind) '$value', expected REG_SZ '$($expected[$name])'") }
+        }
+    }
+    $where = "CLSID\$toastClsid\LocalServer32"
+    $command = "`"$ghosttyExe`" --gx-shell-action=toast-server"
+    if ($null -eq $Server) { $problems.Add("$where is not registered") }
+    else {
+        $extra = @($Server.Keys | Where-Object { $_ -ne '' } | Sort-Object)
+        if ($extra.Count) { $problems.Add("$where has unexpected values: $($extra -join ', ')") }
+        if (-not $Server.ContainsKey('')) { $problems.Add("$where has no default value") }
+        else {
+            $entry = $Server['']
+            $match = [regex]::Match([string]$entry.Value, '^"([^"]+)" --gx-shell-action=toast-server$')
+            if ($entry.Kind -cne 'String' -or -not $match.Success -or -not (Same-Path $match.Groups[1].Value $ghosttyExe)) {
+                $problems.Add("$where default is $($entry.Kind) '$($entry.Value)', expected REG_SZ '$command'")
+            }
+        }
+    }
+    foreach ($link in $Links) {
+        if (-not $link.Exists) { $problems.Add("shortcut $($link.Path) is missing"); continue }
+        if ($link.AppUserModelId -cne $shellAumid) { $problems.Add("shortcut $($link.Path) has AppUserModelID '$($link.AppUserModelId)', expected '$shellAumid'") }
+        if ($link.ToastActivatorClsid -ine $toastClsid) { $problems.Add("shortcut $($link.Path) has ToastActivatorCLSID '$($link.ToastActivatorClsid)', expected '$toastClsid'") }
+    }
+    return $problems.ToArray()
+}
+# Both Start-menu shortcuts must carry the identity; the optional desktop shortcut too when it exists.
+function Assert-ShellIdentity([string]$Label) {
+    $identity = Registry-Entries $aumidKey
+    $server = Registry-Entries $toastServerKey
+    $links = @(foreach ($path in $ownedShortcuts) {
+        if ($path -ne $ownedShortcuts[2] -or (Test-Path -LiteralPath $path)) { Shortcut-Identity $path }
+    })
+    [ordered]@{ app_user_model_id = $identity; toast_local_server = $server; shortcuts = $links } |
+        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Evidence "$Label-shell-identity.json") -Encoding utf8
+    $problems = @(ShellIdentity-Problems $identity $server $links)
+    Assert ($problems.Count -eq 0) "${Label}: the Windows Shell identity of Ghostty GX is wrong: $($problems -join '; ')"
 }
 # Sets (or, for $null, removes) process environment variables for the programs started next and returns the
 # previous values, so that passing the result back restores them.
@@ -426,6 +566,7 @@ function Run-Uninstall([string]$Label) {
     Assert (@(Owned-Fonts).Count -eq 0) 'owned font registrations remain'
     Assert (-not (Test-Path -LiteralPath 'HKCU:\Software\GX Shell')) 'ownership registry key remains'
     Assert (-not (Test-Path -LiteralPath $appPathKey)) 'App Paths\ghostty.exe registration remains'
+    foreach ($path in $aumidKey, $toastClsidKey) { Assert (-not (Test-Path -LiteralPath $path)) "Windows Shell identity registration remains: $path" }
     foreach ($path in $ownedShortcuts) { Assert (-not (Test-Path -LiteralPath $path)) "owned shortcut remains: $path" }
     Assert-UserData $userBefore $Label
     Assert-NonOwnedState $Label
@@ -542,6 +683,7 @@ function Assert-InstalledState([string]$Label) {
         }
     } finally { $fontKey.Dispose(); $ownerKey.Dispose() }
     Assert-Shortcuts $Label
+    Assert-ShellIdentity $Label
     $registered = (Get-Item -LiteralPath $appPathKey).GetValue('')
     Assert ($registered -ieq $ghosttyExe) "${Label}: App Paths\ghostty.exe registration changed: $registered"
     Assert (-not (Test-Path -LiteralPath $ownedShortcuts[2])) "${Label}: unchecked desktop shortcut was created"
@@ -585,6 +727,7 @@ $ownedShortcuts = @(
 foreach ($path in $ownedShortcuts) { Assert (-not (Test-Path -LiteralPath $path)) "Refusing to overwrite pre-existing shortcut: $path" }
 Assert (-not (Test-Path -LiteralPath 'HKCU:\Software\GX Shell')) 'pre-existing ownership registry key'
 Assert (-not (Test-Path -LiteralPath $appPathKey)) 'pre-existing App Paths\ghostty.exe registration'
+foreach ($path in $aumidKey, $toastClsidKey) { Assert (-not (Test-Path -LiteralPath $path)) "pre-existing Windows Shell identity registration: $path" }
 $existingFonts = Registry-Values 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
 foreach ($name in $expectedFontKeys.Keys) { Assert (-not $existingFonts.ContainsKey($name)) "pre-existing owned font name: $name" }
 $profile = Join-Path $env:LOCALAPPDATA 'ohmyzsh-gx\profile'
@@ -615,6 +758,8 @@ foreach ($name in 'gx-zsh', 'herdr') {
 
 Step 'the Ghostty GX and GX Zsh Start-menu shortcuts and App Paths start the installed Ghostty GX'
 Assert-Shortcuts 'install'
+Step 'the AppUserModelID, toast COM local server and shortcut identity of Ghostty GX are registered'
+Assert-ShellIdentity 'install'
 Assert ((Get-Item -LiteralPath $appPathKey).GetValue('') -ieq $ghosttyExe) 'App Paths\ghostty.exe does not point to the installed Ghostty GX'
 
 Step 'GX Zsh with Oh My Zsh; its first start creates the GX-managed herdr configuration'
@@ -778,6 +923,7 @@ try {
         Assert ((Test-Path -LiteralPath $gxZshExe) -and (Test-Path -LiteralPath $ghosttyExe) -and (Test-Path -LiteralPath (Join-Path $app 'unins000.exe'))) 'an in-use refusal removed installed entry points'
         Assert ((Get-ItemProperty -LiteralPath 'HKCU:\Software\GX Shell').InstallDir -ceq $installDir) 'an in-use refusal changed ownership'
         Assert (@(Owned-PathEntries).Count -eq 1 -and @(Owned-Fonts).Count -eq 8) 'an in-use refusal changed PATH or fonts'
+        Assert-ShellIdentity $case.Label
     }
 } finally { $handle.Dispose() }
 Assert ((Get-FileHash -LiteralPath $occupied).Hash -ceq $occupiedHash) 'an in-use refusal changed the runtime file'
@@ -877,6 +1023,7 @@ $smokeProvenance.legacy_release_upgrade = if ($PreviousInstaller) { 'PASS_EXPLIC
 $smokeProvenance | Add-Member -NotePropertyName coverage -NotePropertyValue @{
     install = 'PASS'; same_version_reinstall = 'PASS'; uninstall = 'PASS'; user_configuration = 'PASS'; occupied_file_refusal = 'PASS'
     reinstall_runtime = 'PASS'; second_install_runtime = 'PASS'; profile_contents = 'PASS'; non_owned_baseline = 'PASS'
+    windows_shell_identity = 'PASS'
     hosted_software_window = 'EVIDENCE_READY'; desktop_input_echo_redraw = 'NOT_RUN'; hardware_gpu = 'NOT_RUN'; images_reviewed = $false
     previous_gx_shell = $(if ($PreviousInstaller) { 'PASS_EXPLICIT_INPUT_ONLY' } else { 'NOT_RUN' })
 }

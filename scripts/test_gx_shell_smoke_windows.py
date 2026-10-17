@@ -355,6 +355,154 @@ foreach($name in $baseline.Keys){
                                     text=True, errors='replace', capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    @unittest.skipUnless(os.name == 'nt' and PWSH, 'Windows shell property store fixture')
+    def test_shell_identity_validation_and_shortcut_reader(self):
+        script = r'''
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens=$null; $errors=$null
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:GX_SMOKE_TEST_SCRIPT,[ref]$tokens,[ref]$errors)
+if($errors.Count){ throw ($errors | Out-String) }
+$names=@('Assert','Initialize-ShortcutProperties','Shortcut-Identity','Registry-Entries','Same-Path','ShellIdentity-Problems')
+foreach($f in $ast.FindAll({param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst]},$true)){
+    if($f.Name -in $names){ . ([scriptblock]::Create($f.Extent.Text)) }
+}
+$app=Join-Path $env:GX_SMOKE_TEST_ROOT 'Programs\GXShell'
+$constants=@('ghosttyExe','shellAumid','toastClsid','aumidKey','toastClsidKey','toastServerKey')
+foreach($a in $ast.FindAll({param($a) $a -is [System.Management.Automation.Language.AssignmentStatementAst]},$false)){
+    if($a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $a.Left.VariablePath.UserPath -in $constants){ . ([scriptblock]::Create($a.Extent.Text)) }
+}
+foreach($name in $constants){ if(-not (Test-Path -LiteralPath "Variable:$name")){ throw "constant $name not loaded" } }
+# Test-only writer: the smoke script itself never opens a shortcut property store for writing.
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class GxSmokeFixtureShortcutWriter {
+    [StructLayout(LayoutKind.Sequential, Pack = 4)] struct PropertyKey { public Guid FormatId; public uint PropertyId; }
+    [StructLayout(LayoutKind.Sequential)] struct PropVariant { public ushort Type, Reserved1, Reserved2, Reserved3; public IntPtr Value, Value2; }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPropertyStore {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, out PropertyKey key);
+        [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant value);
+        [PreserveSig] int SetValue(ref PropertyKey key, ref PropVariant value);
+        [PreserveSig] int Commit();
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    static extern void SHGetPropertyStoreFromParsingName(string path, IntPtr bindContext, int flags, ref Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out IPropertyStore store);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropVariant value);
+    static void Set(IPropertyStore store, uint id, PropVariant value) {
+        var key = new PropertyKey { FormatId = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), PropertyId = id };
+        try { Marshal.ThrowExceptionForHR(store.SetValue(ref key, ref value)); } finally { PropVariantClear(ref value); }
+    }
+    public static void Write(string path, string aumid, string clsid) {
+        var riid = typeof(IPropertyStore).GUID;
+        IPropertyStore store;
+        SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 2, ref riid, out store); // GPS_READWRITE
+        try {
+            Set(store, 5, new PropVariant { Type = 31, Value = Marshal.StringToCoTaskMemUni(aumid) });
+            var guid = Marshal.AllocCoTaskMem(16);
+            Marshal.StructureToPtr(new Guid(clsid), guid, false);
+            Set(store, 26, new PropVariant { Type = 72, Value = guid });
+            Marshal.ThrowExceptionForHR(store.Commit());
+        } finally { Marshal.ReleaseComObject(store); }
+    }
+}
+"@
+function Expect-Problem([string]$Case, [string]$Pattern, $Identity, $Server, $Links) {
+    $problems=@(ShellIdentity-Problems $Identity $Server $Links)
+    if(-not ($problems | Where-Object { $_ -like $Pattern })){ throw "${Case}: expected a problem like '$Pattern', got: $($problems -join '; ')" }
+}
+function Entry([string]$Value, [string]$Kind='String'){ [pscustomobject]@{ Kind=$Kind; Value=$Value } }
+function Good-Identity { @{ GxExecutable=(Entry $ghosttyExe); CustomActivator=(Entry $toastClsid); DisplayName=(Entry 'Ghostty GX'); IconUri=(Entry $ghosttyExe) } }
+function Good-Server { @{ ''=(Entry "`"$ghosttyExe`" --gx-shell-action=toast-server") } }
+function Link([string]$Aumid=$shellAumid, [string]$Clsid=$toastClsid, [bool]$Exists=$true){ [pscustomobject]@{ Path='C:\fixture\Ghostty GX.lnk'; Exists=$Exists; AppUserModelId=$Aumid; ToastActivatorClsid=$Clsid } }
+if($shellAumid -cne 'gx0404.GhosttyGX' -or $toastClsid -cne '{978ab84b-3cac-4593-95d5-2e04d68eed4f}'){ throw 'unexpected identity constants' }
+if($aumidKey -cne 'HKCU:\Software\Classes\AppUserModelId\gx0404.GhosttyGX' -or
+   $toastServerKey -cne 'HKCU:\Software\Classes\CLSID\{978ab84b-3cac-4593-95d5-2e04d68eed4f}\LocalServer32'){ throw "unexpected registry keys: $aumidKey $toastServerKey" }
+$problems=@(ShellIdentity-Problems (Good-Identity) (Good-Server) @((Link),(Link)))
+if($problems.Count){ throw "the installer-owned identity was rejected: $($problems -join '; ')" }
+# Paths compare normalized and case-insensitively; the CLSID compares case-insensitively.
+$variant=Good-Identity
+$variant.GxExecutable=Entry $ghosttyExe.ToUpperInvariant()
+$variant.IconUri=Entry ($ghosttyExe.Replace('\ghostty\','\ghostty\.\') -replace '\\','/')
+$variant.CustomActivator=Entry $toastClsid.ToUpperInvariant()
+$server=@{ ''=(Entry "`"$($ghosttyExe.ToLowerInvariant())`" --gx-shell-action=toast-server") }
+$problems=@(ShellIdentity-Problems $variant $server @(Link 'gx0404.GhosttyGX' $toastClsid.ToUpperInvariant()))
+if($problems.Count){ throw "normalized paths were rejected: $($problems -join '; ')" }
+Expect-Problem 'no AUMID key' '*AppUserModelId\gx0404.GhosttyGX is not registered' $null (Good-Server) @()
+Expect-Problem 'no server key' '*LocalServer32 is not registered' (Good-Identity) $null @()
+foreach($name in 'GxExecutable','CustomActivator','DisplayName','IconUri'){
+    $missing=Good-Identity; $missing.Remove($name)
+    Expect-Problem "missing $name" "*lacks $name" $missing (Good-Server) @()
+    $wrong=Good-Identity; $wrong[$name]=Entry 'C:\elsewhere\ghostty.exe'
+    Expect-Problem "wrong $name" "*$name is String*" $wrong (Good-Server) @()
+    $kind=Good-Identity; $kind[$name]=Entry $kind[$name].Value 'ExpandString'
+    Expect-Problem "kind $name" "*$name is ExpandString*" $kind (Good-Server) @()
+}
+$case=Good-Identity; $case.DisplayName=Entry 'ghostty gx'
+Expect-Problem 'display name case' '*DisplayName is String*' $case (Good-Server) @()
+$extra=Good-Identity; $extra.Stale=Entry 'x'
+Expect-Problem 'extra AUMID value' '*unexpected values: Stale' $extra (Good-Server) @()
+foreach($command in "$ghosttyExe --gx-shell-action=toast-server", "`"$ghosttyExe`"", "`"$ghosttyExe`" --gx-shell-action=toast-server --extra",
+                    "`"C:\elsewhere\ghostty.exe`" --gx-shell-action=toast-server", "`"$ghosttyExe`" --gx-shell-action=Toast-Server"){
+    Expect-Problem "server '$command'" '*LocalServer32 default is String*' (Good-Identity) @{ ''=(Entry $command) } @()
+}
+Expect-Problem 'server kind' '*LocalServer32 default is ExpandString*' (Good-Identity) @{ ''=(Entry "`"$ghosttyExe`" --gx-shell-action=toast-server" 'ExpandString') } @()
+Expect-Problem 'server without default' '*LocalServer32 has no default value' (Good-Identity) @{} @()
+$server=Good-Server; $server.ThreadingModel=Entry 'Both'
+Expect-Problem 'extra server value' '*LocalServer32 has unexpected values: ThreadingModel' (Good-Identity) $server @()
+Expect-Problem 'missing shortcut' '*Ghostty GX.lnk is missing' (Good-Identity) (Good-Server) @(Link -Exists $false)
+Expect-Problem 'shortcut without AUMID' "*has AppUserModelID '', expected 'gx0404.GhosttyGX'" (Good-Identity) (Good-Server) @(Link $null)
+Expect-Problem 'shortcut AUMID case' "*has AppUserModelID 'gx0404.ghosttygx'*" (Good-Identity) (Good-Server) @(Link 'gx0404.ghosttygx')
+Expect-Problem 'shortcut without toast CLSID' "*has ToastActivatorCLSID ''*" (Good-Identity) (Good-Server) @(Link $shellAumid $null)
+Expect-Problem 'shortcut other toast CLSID' '*has ToastActivatorCLSID*' (Good-Identity) (Good-Server) @(Link $shellAumid '{00000000-0000-0000-0000-000000000001}')
+# The reader sees the AppUserModel properties of a real shortcut file inside the fixture directory.
+$lnk=Join-Path $env:GX_SMOKE_TEST_ROOT 'Ghostty GX.lnk'
+$link=(New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $link.TargetPath=$ghosttyExe; $link.Save()
+$plain=Shortcut-Identity $lnk
+if(-not $plain.Exists -or $null -ne $plain.AppUserModelId -or $null -ne $plain.ToastActivatorClsid){ throw "a plain shortcut reported an identity: $($plain | Out-String)" }
+[GxSmokeFixtureShortcutWriter]::Write($lnk, $shellAumid, $toastClsid.ToUpperInvariant())
+$read=Shortcut-Identity $lnk
+if($read.AppUserModelId -cne $shellAumid -or $read.ToastActivatorClsid -ine $toastClsid){ throw "shortcut identity not read back: $($read | Out-String)" }
+$problems=@(ShellIdentity-Problems (Good-Identity) (Good-Server) @($read))
+if($problems.Count){ throw "a correct shortcut was rejected: $($problems -join '; ')" }
+if((Shortcut-Identity (Join-Path $env:GX_SMOKE_TEST_ROOT 'absent.lnk')).Exists){ throw 'an absent shortcut was reported' }
+if($null -ne (Registry-Entries 'HKCU:\Software\GXShellSmokeFixture-never-created')){ throw 'an absent registry key was reported' }
+'''
+        with tempfile.TemporaryDirectory(prefix='gx-shell-identity-fixture-') as directory:
+            result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', script + '\nexit 0\n'],
+                                    env=dict(os.environ, GX_SMOKE_TEST_SCRIPT=str(LIFECYCLE), GX_SMOKE_TEST_ROOT=directory),
+                                    text=True, errors='replace', capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_shell_identity_is_checked_after_installs_and_removed_on_uninstall(self):
+        text = LIFECYCLE.read_text(encoding='utf-8')
+        self.assertIn("$shellAumid = 'gx0404.GhosttyGX'", text)
+        self.assertIn("$toastClsid = '{978ab84b-3cac-4593-95d5-2e04d68eed4f}'", text)
+        self.assertIn('$aumidKey = "HKCU:\\Software\\Classes\\AppUserModelId\\$shellAumid"', text)
+        self.assertIn('$toastClsidKey = "HKCU:\\Software\\Classes\\CLSID\\$toastClsid"', text)
+        self.assertIn('--gx-shell-action=toast-server', text)
+        installed = text.split('function Assert-InstalledState', 1)[1].split('function Runtime-Recheck', 1)[0]
+        self.assertIn('Assert-ShellIdentity $Label', installed)
+        uninstall = text.split('function Run-Uninstall', 1)[1].split('function Save-Screenshot', 1)[0]
+        self.assertIn('foreach ($path in $aumidKey, $toastClsidKey) { Assert (-not (Test-Path -LiteralPath $path)) '
+                      '"Windows Shell identity registration remains: $path" }', uninstall)
+        self.assertLess(text.index('"pre-existing Windows Shell identity registration: $path"'), text.index("Step 'install'"))
+        self.assertLess(text.index("Run-Setup $Installer 'install'"), text.index("Assert-ShellIdentity 'install'"))
+        refusal = text.split("Step 'install and uninstall refuse an occupied runtime file", 1)[1].split("Step 'same-version reinstall", 1)[0]
+        self.assertIn('Assert-ShellIdentity $case.Label', refusal)
+        # Both reinstall legs reach Assert-InstalledState through Runtime-Recheck, so reinstall stays idempotent.
+        self.assertIn("Assert-InstalledState 'before-reinstall'", text)
+        self.assertIn('    Assert-InstalledState $Label\n', text.split('function Runtime-Recheck', 1)[1])
+        reader = text.split('function Initialize-ShortcutProperties', 1)[1].split('function Shortcut-Identity', 1)[0]
+        self.assertIn('9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3', reader)
+        self.assertIn('Property(store, 5), Property(store, 26)', reader)
+        self.assertIn('SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 0, ref riid, out store)', reader)
+        for forbidden in ('store.SetValue', 'store.Commit'):
+            self.assertNotIn(forbidden, reader)
+        self.assertIn("windows_shell_identity = 'PASS'", text)
     def test_gpu_entry_has_no_payload_or_desktop_execution_backend(self):
         text = GPU.read_text(encoding='utf-8')
         for forbidden in ('Start-Process', 'Stop-Process', 'SendKeys', 'SendInput', 'SetEnvironmentVariable',
