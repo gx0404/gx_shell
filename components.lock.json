@@ -4,17 +4,17 @@
     "herdr": {
       "repository": "gx0404/herdr",
       "branch": "feature/gx_herdr",
-      "revision": "702cf257f6a4c9e889a823c09c423bb3b748f8cb"
+      "revision": "fe54d5ff3050f503815a99140384c1e18a95fbbb"
     },
     "ohmyzsh": {
       "repository": "gx0404/ohmyzsh",
       "branch": "feature/gx_ohmyzsh",
-      "revision": "5b55db6f6ac1ac90676d5dc0192381aa6459e501"
+      "revision": "53da420d696617b52cf47d0438bdd66dbce831df"
     },
     "gx_ghostty": {
       "repository": "gx0404/gx_ghostty",
       "branch": "gx_ghostty",
-      "revision": "1be3d19fc75f012317c09a7d55fa4be2380fb4a4"
+      "revision": "70ed69767604fdbdf470555b233cb48a3ffd90c7"
     }
   }
 }
