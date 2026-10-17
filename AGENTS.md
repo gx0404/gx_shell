@@ -66,7 +66,7 @@
 - **没有旧 Release 升级覆盖**：旧资产已按迁移决定退出验收输入；不下载旧安装包或根仓历史指纹 commit
   作为硬依赖，也不以 warning skip 冒充升级测试通过。保留安装/使用/卸载、同版本重装与配置保护检查；
   旧版到新版升级未验证，必须明确披露。WezTerm 的配置与数据（`~/.config/wezterm` 等）不读取、不迁移、不删除。
-- **安装器只动自己拥有的东西**：Windows 仅写 HKCU 的 PATH、字体、`App Paths\ghostty.exe` 与 `Software\GX Shell`，
+- **安装器只动自己拥有的东西**：Windows 仅写 HKCU 的 PATH、字体、`App Paths\ghostty.exe`、Ghostty GX 的通知身份（`Software\Classes\AppUserModelId\gx0404.GhosttyGX` 与 `Software\Classes\CLSID\{978ab84b-3cac-4593-95d5-2e04d68eed4f}`，仅在仍属于本安装目录时改写或删除，被其他目录占用时拒绝安装）与 `Software\GX Shell`，
   只用各自的卸载程序卸载单独安装的 Oh My Zsh GX / Herdr GX / Ghostty GX（Ghostty GX 查 HKCU 与 HKLM，为所有用户
   安装的只在安装器已提权时卸载，否则拒绝、不弹 UAC），不再动单独安装的 WezTerm GX；卸载任何组件前先查它们与自身的
   文件，占用时拒绝而不杀进程；deb 维护脚本不写用户 HOME。真实安装/卸载只在一次性 runner 或容器执行。
@@ -89,8 +89,9 @@
 - 根测试：`python -m unittest discover -s scripts -p 'test_gx_shell_*.py'`；Linux 另跑 deb/符号链接用例。
 - 真实锁已存在；默认分支合并及锁更新后，重跑 `python scripts/gx_shell_sources.py check --lock components.lock.json`，
   再加 `--require-remote` 验远端。未完成的校验标 PENDING，不造 SHA 或用旧 `gx` 校验结果代替本轮证据。
-- 改 `packaging/windows/gx-shell.iss` 须用 Inno Setup 7.1 实际编译；改 workflow 须跑已有 `actionlint`，
-  缺工具则标 PENDING，不临时安装。组件测试按外部 fork 的规则执行，不能被根夹具单测替代。
+- 改 `packaging/windows/gx-shell.iss` 须用 Inno Setup 7.1 实际编译；改 workflow 须跑 `actionlint`。
+  缺工具仅可经 `scripts/gx_shell_setup.*` 按版本与 SHA-256 钉版装入 `.local/tools`，禁止系统级安装；
+  setup 无法运行则标 PENDING。组件测试按外部 fork 的规则执行，不能被根夹具单测替代。
 - 工具探测与真实构建分开记录；工具缺口、验收路线和命令见 README。历史 101 项测试、7 项跳过不是本轮结果。
   本轮已运行的命令、结果/跳过数与未验证项记在 README「本轮快照与当前待验证项」，未完成项保留 PENDING；
   不提前声称发布验收完成。

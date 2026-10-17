@@ -13,9 +13,11 @@ Windows 上 Ghostty GX 默认进入 GX Zsh，Ubuntu 上用 `ghostty-gx -e gx-zsh
 里运行。0.3.0 及以前随包的 WezTerm GX 从 0.4.0 起移除，变化见 CHANGELOG 的 0.4.0 段。
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
-0.4.1（2026-10-10）把 Ghostty GX 更新到 0.0.2，来源锁的 gx_ghostty 换成其发布提交 `1be3d19f`，herdr 与 Oh My Zsh GX
-不变；没有先单独跑手动验收，由 tag `gx-shell-v0.4.1` 触发的 release.yml（run `38009098652`）完成同一套构建与两平台验收后
-发布，见「本轮快照与当前待验证项」。0.4.0（2026-10-10）用 Ghostty GX 取代 WezTerm GX，来源锁钉 Ghostty GX 0.0.1 的发布提交；
+**0.5.0 正在准备，尚未发布**：CHANGELOG 为 `0.5.0(TBD)`，来源锁改为 Ghostty GX 0.0.3 的未打 tag 修订 `70ed6976` 与 herdr
+`fe54d5ff`（ohmyzsh 待其依赖锁跟进后填入），Windows 安装程序新增 Ghostty GX 通知身份的登记；构建与两平台验收都还没有
+运行，见「本轮快照与当前待验证项」。0.4.1（2026-10-10）把 Ghostty GX 更新到 0.0.2，来源锁的 gx_ghostty 换成其发布
+提交 `1be3d19f`，herdr 与 Oh My Zsh GX 不变；没有先单独跑手动验收，由 tag `gx-shell-v0.4.1` 触发的 release.yml（run
+`38009098652`）完成同一套构建与两平台验收后发布。0.4.0（2026-10-10）用 Ghostty GX 取代 WezTerm GX，来源锁钉 Ghostty GX 0.0.1 的发布提交；
 发布前先手动运行 release.yml（run `37973258654`，publish=false）完成两平台整包验收，再由 tag `gx-shell-v0.4.0` 触发
 release.yml（run `37980632775`）完整构建、验收并发布。0.3.0 由 tag `gx-shell-v0.3.0` 触发的 run `37027305037` 发布。
 硬件 GPU、桌面交互与旧版升级仍未验证。
@@ -25,7 +27,8 @@ release.yml（run `37980632775`）完整构建、验收并发布。0.3.0 由 tag
 最新版本是 0.4.1（随包 Ghostty GX 0.0.2），从 [Releases](https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.4.1)
 下载。上一个版本 0.4.0（随包 Ghostty GX 0.0.1）的 Release 见 [gx-shell-v0.4.0](https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.4.0)，
 0.3.0（随包 WezTerm GX）的见 [gx-shell-v0.3.0](https://github.com/gx0404/gx_shell/releases/tag/gx-shell-v0.3.0)；
-更早版本的 Release 资产已撤下，不要将旧版本说明理解为仍有可下载资产。包格式与安装契约如下：
+更早版本的 Release 资产已撤下，不要将旧版本说明理解为仍有可下载资产。0.5.0 尚未发布，CHANGELOG 中的 `0.5.0(TBD)`
+段是发布前草稿。包格式与安装契约如下：
 
 | 平台 | 文件 | 安装方式 |
 |---|---|---|
@@ -151,6 +154,83 @@ herdr 新开的窗格使用 GX Zsh：GX Zsh 第一次启动时生成或接管 `<
   （GX Shell 不改动指向别处的登记）；为所有用户安装时开始菜单会有两个「Ghostty GX」。再次运行 GX Shell 安装程序会按
   上文「单独安装的 Ghostty GX」先卸载它。
 
+<!-- BEGIN GX_SHELL_LOCAL_DEVELOPMENT -->
+## 本地开发环境
+
+根仓的测试与静态检查使用项目内工具链，无需预先安装 Python。Windows x64 用 PowerShell，Linux x86_64
+用 Bash；首次安装需要联网及已有的下载、解压工具（Windows 自带 tar，Linux 需 curl、tar、sha256sum）。
+所有下载固定版本和 SHA-256，校验不符立即失败；不调用系统包管理器，不更改系统 PATH、执行策略或用户 Python。
+这是缺工具时唯一允许的安装入口；无法运行时对应检查仍标 PENDING，旧段落中的「不临时安装」不限制此入口。
+
+| 工具 | 固定版本 | 项目内位置 |
+|---|---|---|
+| CPython | 3.12.12，python-build-standalone 20251014 | `.local/tools/python/cpython-3.12.12-windows-x86_64-none/python.exe`；Linux 为 `cpython-3.12.12-linux-x86_64-gnu/bin/python3.12` |
+| actionlint | 1.7.12 | `.local/tools/actionlint/actionlint.exe`；Linux 为 `actionlint` |
+| Inno Setup（Windows 可选） | 7.1.0，与 gx_ghostty 的 pin/digest 相同 | `.local/tools/innosetup/ISCC.exe` |
+
+固定下载地址及完整 SHA-256 在 `scripts/gx_shell_setup.ps1` / `.sh` 中维护，升级需审阅其 diff。
+已有 uv 时使用它安装已校验的本地 Python 发行包：传入仅含该版本的下载清单，以离线模式执行，
+禁止全局启动器与 Windows 注册表登记。Windows 优先查找 `C:\Users\guoxi\.local\bin\uv.exe`，再查 PATH；
+Linux 查 PATH。没有 uv 时直接解压同一个校验过的独立发行包，不依赖系统 Python 或 uv trampoline。
+
+```powershell
+# Windows：首次安装（含生成安装器需要的 ISCC）
+pwsh -NoProfile -File scripts/gx_shell_setup.ps1 -InnoSetup
+. ./.local/tools/env.ps1
+python -c "import sys; print(sys.version)"
+actionlint -version
+& $env:ISCC /?
+# 只读检查：不下载、不建目录、不写 env 文件；缺失或版本不符返回非零
+pwsh -NoProfile -File scripts/gx_shell_setup.ps1 -Check -InnoSetup
+```
+
+```bash
+# Linux x86_64；env.sh 需要在 Bash 中 source
+bash scripts/gx_shell_setup.sh
+source .local/tools/env.sh
+python3.12 -c 'import sys; print(sys.version)'
+actionlint -version
+bash scripts/gx_shell_setup.sh --check  # 也接受 doctor
+```
+
+环境文件只影响当前 shell，导出真实解释器路径 `GX_SHELL_PYTHON`，不经过用户目录中的 trampoline。
+Windows 同时导出已安装的 `ISCC`。Inno 使用 `/CURRENTUSER /PORTABLE=1` 静默便携安装；不启动 GX Shell
+产品安装器。安装回执绑定下载 SHA-256 和实际可执行文件散列，重复运行复用已验证工具；不完整或未知目录
+会拒绝覆盖，日志与失败下载保留，须先检查原因。setup 拒绝指向其他位置的符号链接或 junction。
+
+工具本体放 `.local/tools/`，下载缓存放 `.local/cache/setup/`，uv 缓存放 `.local/cache/uv/`；
+这两类工具缓存是本节明确的专用目录。每次 setup 的临时文件和日志仍放新建的 `.local/build/s<随机串>/`。
+`UV_PYTHON_INSTALL_DIR`、`UV_CACHE_DIR` 与临时目录在安装期间指向仓库内，结束后恢复调用者原环境。
+`.local/` 已被根 `.gitignore` 完整忽略。
+
+根测试应把临时目录放到新的、尽量短的 `.local/build/<run>/`，避免 Windows 路径预算超限：
+
+```powershell
+. ./.local/tools/env.ps1
+$run = Join-Path (Get-Location) ('.local/build/u' + [Guid]::NewGuid().ToString('N').Substring(0, 3))
+New-Item -ItemType Directory -Path $run -ErrorAction Stop | Out-Null
+$env:TEMP = $run; $env:TMP = $run
+$env:PYTHONDONTWRITEBYTECODE = '1'; $env:PYTHONUTF8 = '1'
+# 让测试启动的 Windows PowerShell 5.1 使用自己的模块目录
+Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+python -m unittest discover -s scripts -p 'test_gx_shell_*.py'
+actionlint .github/workflows/release.yml
+```
+
+这里的 Python 3.12 用于根测试与工具检查；完整组件构建所需的 Python 3.14/zstd、Rust、MSVC/SDK、Zig 等
+仍按各 fork 的契约准备。本入口不安装它们，也不代替组件构建、产品安装生命周期、硬件 GPU 或发布验收。
+
+本次工具实测（2026-10-18，补充「本轮快照与当前待验证项」）：三个 Windows 工具在不提权沙箱内执行成功；
+PowerShell 7 和 Windows PowerShell 5.1 的只读检查通过；PowerShell 5.1 在含空格的隔离路径中使用缓存完成
+uv 安装。新增 setup 单测 9 项通过；Linux 脚本 `bash -n` 通过，原生 Linux 安装实测 PENDING。
+actionlint 检查当前 `release.yml` 通过；未安装 shellcheck，不代表 `run:` 内嵌脚本已通过 shellcheck。
+以上根全量命令在本地 Python 3.12.12、ISCC 7.1.0 环境中运行 260 项，OK（skipped=8，失败/错误均 0，
+150.762 秒），包含原生 Windows 打包器夹具编译；日志 `.local/build/u406/unittest.log`。
+首次安装证据在 `.local/build/sfc5de3c0/`：工具安装成功，初版 doctor 误用不含完整版本号的 ISCC 帮助输出
+导致返回 1；改用 `--version` 后，在沙箱中重复执行 `./scripts/gx_shell_setup.ps1 -InnoSetup` 返回 0，
+并单独验证 `ISCC.exe /?` 返回 0。重复安装没有重新下载或覆盖工具；工具就绪不等于整包发布验收通过。
+<!-- END GX_SHELL_LOCAL_DEVELOPMENT -->
+
 ## 仓库结构
 
 主仓是协调仓，不再通过 subtree 或根 `.gitmodules` 管理三个 fork 的源码：
@@ -210,15 +290,20 @@ checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材�
 根 coordinator SHA 与三组件 SHA 分别记录，不能再拿一个根提交代表四个仓库。锁 digest 是文件**原始字节**
 的 SHA-256；换行或 JSON 格式变化也会改变它，不在锁内写自引用 digest。仍是 `wezterm` 组件的旧锁会被拒绝。
 
-当前锁（0.4.1）的三个修订都是各自默认分支上的真实提交：herdr `702cf257f6a4c9e889a823c09c423bb3b748f8cb`（0.9.3）、
+**0.5.0 准备中的锁**：herdr `fe54d5ff3050f503815a99140384c1e18a95fbbb`（仍为 0.9.3，含 fork CHANGELOG
+「Unreleased」的改动）、gx_ghostty `70ed69767604fdbdf470555b233cb48a3ffd90c7`（未打 tag，fork CHANGELOG 的 0.0.3 段仍为
+`(TBD)`）、ohmyzsh `53da420d696617b52cf47d0438bdd66dbce831df`（只把依赖锁里的 herdr 换成 `fe54d5ff`），lock digest
+`b2c66ae498fff5d0258c2c7fa1420a22d2d91d738816beb462f773ac1188f7fe`，`check` 与 `check --require-remote` 本地通过。下面是最后一次发布的锁。
+
+已发布的 0.4.1 锁的三个修订都是各自默认分支上的真实提交：herdr `702cf257f6a4c9e889a823c09c423bb3b748f8cb`（0.9.3）、
 ohmyzsh `5b55db6f6ac1ac90676d5dc0192381aa6459e501`、gx_ghostty `1be3d19fc75f012317c09a7d55fa4be2380fb4a4`（Ghostty GX
 0.0.2 的发布提交 `chore(release): 定版 0.0.2`，版本串 `1.3.2-gx.0.0.2`），lock digest
 `4bf0b65075e3bff81752342b7424ee24920edc24c098b110f02bde29663206ed`；`check` 与 `check --require-remote` 都已通过，见
 「本轮快照与当前待验证项」。0.4.0 的锁只有 gx_ghostty 不同（Ghostty GX 0.0.1 的发布提交 `5525f8bc`，digest
 `366bff0f…`）。gx_ghostty 的修订须含 stage 消费契约（`gx_package.py --build`）与 Windows 默认进入 GX Zsh 的接线，
 `1be3d19f` 两项都有。herdr 的修订必须与锁定 ohmyzsh 的依赖锁（`scripts/packaging/dependencies.json`）一致，
-`prepare` 会核对；所以 herdr 默认分支前进后（远端 `feature/gx_herdr` 现在的头 `fc6c771c` 就比锁新一个提交），要先在
-ohmyzsh 更新依赖锁，再一起更新本锁。来源校验通过也不代表真实产品已通过验收。
+`prepare` 会核对；所以 herdr 默认分支前进后（0.4.1 定版时远端 `feature/gx_herdr` 的头 `fc6c771c` 就比锁新一个提交），要先在
+ohmyzsh 更新依赖锁，再一起更新本锁，0.5.0 正按这个顺序进行。来源校验通过也不代表真实产品已通过验收。
 
 在上述对齐完成后，从根仓运行以下 Git Bash 示例；本地与复验 checkout 固定在根仓 `.local/sources/<component>`，不使用
 仓外路径：
@@ -256,9 +341,11 @@ Ghostty GX 按 `<exe 目录>\..\bin` 找 GX Zsh，所以布局变更须同步 Oh
 GX Zsh 探测（`src/gx/profiles.zig`）、根 packager、安装生命周期与硬件 GPU 冒烟入口，并更新来源锁。0.3.0 及以前的
 `{app}\wezterm\` 与 `/usr/lib/wezterm-gx` 在升级时删除。
 
-Windows 安装器仅管理 HKCU 中自己的 PATH、字体、`App Paths\ghostty.exe` 和 `Software\GX Shell`；此外只会调用单独安装的
-Oh My Zsh GX、Herdr GX、Ghostty GX 自己的卸载程序把它们静默卸载（为所有用户安装的 Ghostty GX 只在安装器以管理员身份
-运行时卸载，否则拒绝继续，不请求提权）。自己或这些程序的文件被占用时拒绝继续，不杀进程。deb 维护脚本不写用户 HOME。
+Windows 安装器仅管理 HKCU 中自己的 PATH、字体、`App Paths\ghostty.exe`、`Software\GX Shell`，以及 0.5.0 起 Ghostty GX
+的通知身份（`Software\Classes\AppUserModelId\gx0404.GhosttyGX` 与系统通知激活器
+`Software\Classes\CLSID\{978ab84b-3cac-4593-95d5-2e04d68eed4f}`：只在仍属于本安装目录时改写或删除，被别的安装目录占用时
+拒绝安装）；此外只会调用单独安装的 Oh My Zsh GX、Herdr GX、Ghostty GX 自己的卸载程序把它们静默卸载（为所有用户安装的
+Ghostty GX 只在安装器以管理员身份运行时卸载，否则拒绝继续，不请求提权）。自己或这些程序的文件被占用时拒绝继续，不杀进程。deb 维护脚本不写用户 HOME。
 真实安装/卸载仅在一次性 runner 或容器执行；开发机不运行安装生命周期冒烟，只验证隔离的完整 payload 的硬件 GPU/窗口，
 具体边界见「验收与 PENDING」。
 
@@ -367,7 +454,7 @@ stage 回执与完整清单；文件缺失、内容变动、来源错配或冲�
 0.3.0 已由 tag `gx-shell-v0.3.0` 触发 release.yml（run `37027305037`）完整构建、验收并发布。0.4.0 先经手动
 `publish=false` 的 run `37973258654` 完成两平台整包验收，再由 tag `gx-shell-v0.4.0` 触发 release.yml（run
 `37980632775`）完整构建、验收并发布。0.4.1 没有先跑手动验收，由 tag `gx-shell-v0.4.1` 触发的 release.yml（run
-`38009098652`）完成同一套构建与两平台验收后发布。门禁如下：
+`38009098652`）完成同一套构建与两平台验收后发布。0.5.0 还没有运行 release.yml，CHANGELOG 仍为 `(TBD)`。门禁如下：
 
 1. 完成真实锁的默认分支对齐、外部 source adapter 和 stage 接口。根 `prepare` 校验锁 schema、
    digest、仓库/分支/revision、commit 存在与对应默认分支可达性，并检查根 CHANGELOG 版本；缺任一项即阻断。
@@ -421,7 +508,8 @@ Windows 在根目录可运行
 
 以下为目标路线。0.3.0（WezTerm GX）的最终锁 run `36998777427` 完成过路线 1 与路线 2；0.4.0（Ghostty GX）的最终锁
 （gx_ghostty 发布提交 `5525f8bc`）在手动验收 run `37973258654` 与发布 run `37980632775` 上都完成了路线 1 与路线 2；
-0.4.1 的最终锁（gx_ghostty 发布提交 `1be3d19f`）在发布 run `38009098652` 上完成了路线 1 与路线 2。**路线 3 的硬件 GPU 仍受阻**，
+0.4.1 的最终锁（gx_ghostty 发布提交 `1be3d19f`）在发布 run `38009098652` 上完成了路线 1 与路线 2；0.5.0 的锁（gx_ghostty
+`70ed6976`）尚未运行任何路线。**路线 3 的硬件 GPU 仍受阻**，
 结果见下节：
 
 1. **GitHub-hosted Windows**：生成完整 payload，用 Inno Setup 7.1 编译安装器，再以
@@ -441,6 +529,49 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 路径，但软件渲染不经过目标硬件 GPU/驱动，不能替代本机硬件 GPU 证据；本机窗口成功也不替代安装器生命周期。
 
 ### 本轮快照与当前待验证项
+
+#### 0.5.0 准备：Ghostty GX `70ed6976`、herdr `fe54d5ff` 与通知身份登记（2026-10-18，未发布）
+
+本轮还没有定版、提交、打 tag 或发布，CHANGELOG 新增的 `## 0.5.0(TBD)` 段是发布前草稿，`(TBD)` 会阻止发布。以下只记录
+当前工作区的状态；构建、测试与两平台验收都还没有运行，全部是 PENDING，CI 运行后按实际结果补记，不能把下表当作验收结论。
+
+- **来源锁**：herdr `fe54d5ff3050f503815a99140384c1e18a95fbbb`（`Cargo.toml` 仍为 0.9.3，带 fork CHANGELOG
+  「Unreleased」的改动）、gx_ghostty `70ed69767604fdbdf470555b233cb48a3ffd90c7`（未打 tag，fork CHANGELOG 的 `0.0.3(TBD)`
+  段尚未定版）、ohmyzsh `53da420d696617b52cf47d0438bdd66dbce831df`（已推到 `feature/gx_ohmyzsh`，只把依赖锁
+  `scripts/packaging/dependencies.json` 等里的 herdr 换成 `fe54d5ff`）。lock digest `b2c66ae4…`，`check` 与
+  `check --require-remote` 本地通过。
+- **版本串**：gx_ghostty 消费契约规定版本串为 `<build.zig.zon 的 X.Y.Z>-gx.<fork 版本>`；`70ed6976` 的 `build.zig.zon`
+  为 `1.3.2-dev`、fork CHANGELOG 最大版本为 `0.0.3(TBD)`，预计是 `1.3.2-gx.0.0.3`。未定版的 `(TBD)` 能否被 prepare 接受、
+  实际输出是什么都 PENDING，以 prepare 的输出为准。
+- **安装器**：`packaging/windows/gx-shell.iss` 改为登记 Ghostty GX 的通知身份（HKCU
+  `Software\Classes\AppUserModelId\gx0404.GhosttyGX` 与系统通知激活器
+  `Software\Classes\CLSID\{978ab84b-3cac-4593-95d5-2e04d68eed4f}`，只在仍属于本安装目录时改写或删除，被别的安装目录占用
+  时拒绝安装）。Inno Setup 7.1 夹具编译与根单测已通过；Windows 冒烟新增对这些登记、快捷方式 AUMID 与卸载删除的检查，
+  真实安装与卸载只能在一次性 runner 上验证，PENDING。系统通知能否真正弹出、点击能否回到终端不在 CI 范围内。
+- **组件 fork**：herdr `fe54d5ff` 与 gx_ghostty `70ed6976` 的 fork CI 结果本轮没有核对；Ghostty GX 在 runner 上的契约测试
+  与 `zig_test.py --suite main -Dapp-runtime=none` 由根 `ghostty-tests` 覆盖，PENDING。
+- **本轮实际做过的**：本地 `main` 对齐 `origin/main`（0.4.1）并删除多余的 `ghostty-gx` 分支；ohmyzsh 的 herdr 依赖锁更新为
+  `fe54d5ff` 并推送 `53da420d`（该 fork 的 `test_gx_*` 251 项中 1 error 为本机缺 Zsh、1 skip）；新增
+  `scripts/gx_shell_setup.*` 把 CPython 3.12.12、actionlint 1.7.12 与 Inno Setup 7.1 钉版装进 `.local/tools`。在沙箱内用这套工具：
+  根单测 Ran 260，OK（skipped=10，含 2 项因当时未加载 `ISCC`），随后单独加载 `ISCC` 重跑这 2 项 Inno Setup 夹具编译用例
+  均通过；`actionlint .github/workflows/release.yml` 通过；`gx_shell_sources.py check` 与 `--require-remote` 通过；
+  `git diff --check` 干净。两平台构建与冒烟仍待 CI。
+
+| 项目 | 0.5.0 当前边界 |
+|---|---|
+| 来源锁 | PASS（本地）：herdr `fe54d5ff`、ohmyzsh `53da420d`、gx_ghostty `70ed6976`，digest `b2c66ae4…`，`check` 与 `check --require-remote` 通过 |
+| 根测试 / workflow 静态检查 | PASS（本地）：根单测 Ran 260，OK（skipped=10）；Inno Setup 7.1 夹具编译 2 项单独通过；`release.yml` 新增通知身份比对，actionlint 1.7.12 通过 |
+| `gx-shell.iss`（通知身份） | 编译 PASS（Inno Setup 7.1 夹具）；安装冒烟对登记、快捷方式 AUMID 与卸载删除的验证 PENDING（CI） |
+| Ghostty GX stage 与测试（CI） | PENDING：`ghostty-windows`、`ghostty-linux`、`ghostty-tests` 未运行 |
+| shell stage / Windows 整包 / DEB | PENDING：herdr `fe54d5ff` 的 shell stage、组装、安装器与 DEB 均未构建 |
+| `verify`（两平台 provenance 与散列） | PENDING |
+| Windows 安装生命周期 / 软件渲染窗口 | PENDING：须在一次性 runner 上运行并人工审阅截图 |
+| DEB 构建与 Ubuntu 24.04 冒烟 | PENDING |
+| 系统通知实际显示 / 跳转列表 | 不在 CI 范围：Ghostty GX 自己的安装版实测中早期有三次通知未显示，原因未定位 |
+| 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT`，`70ed6976` 尚未重新审计 |
+| 桌面输入 / 拖放 / 跨进程拖动标签 / UI Automation | 未验证 |
+| 从 0.4.1 及更早版本升级 | 未验证：workflow 不传旧安装包 |
+| 发布 | 未进行：CHANGELOG 为 `0.5.0(TBD)`，没有 tag |
 
 #### 0.4.1 定版与发布：锁定 Ghostty GX 0.0.2（2026-10-10）
 
