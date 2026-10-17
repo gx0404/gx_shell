@@ -13,7 +13,7 @@ Windows 上 Ghostty GX 默认进入 GX Zsh，Ubuntu 上用 `ghostty-gx -e gx-zsh
 里运行。0.3.0 及以前随包的 WezTerm GX 从 0.4.0 起移除，变化见 CHANGELOG 的 0.4.0 段。
 
 **迁移中**：源码、上游同步和组件测试归各 fork，主仓锁定各自既有默认分支的完整 SHA，负责安装器、整合与发布。
-**0.5.0 正在准备，尚未发布**：CHANGELOG 为 `0.5.0(TBD)`，来源锁改为 Ghostty GX 0.0.3 的未打 tag 修订 `70ed6976` 与 herdr
+**0.5.0 正在准备，尚未发布**：CHANGELOG 为 `0.5.0(TBD)`，来源锁改为 Ghostty GX 0.0.3 的未打 tag 修订 `ac064c31` 与 herdr
 `fe54d5ff`（ohmyzsh 待其依赖锁跟进后填入），Windows 安装程序新增 Ghostty GX 通知身份的登记；构建与两平台验收都还没有
 运行，见「本轮快照与当前待验证项」。0.4.1（2026-10-10）把 Ghostty GX 更新到 0.0.2，来源锁的 gx_ghostty 换成其发布
 提交 `1be3d19f`，herdr 与 Oh My Zsh GX 不变；没有先单独跑手动验收，由 tag `gx-shell-v0.4.1` 触发的 release.yml（run
@@ -291,9 +291,9 @@ checkout 放在 `RUNNER_TEMP`。已核对的**仓外迁移副本**是历史材�
 的 SHA-256；换行或 JSON 格式变化也会改变它，不在锁内写自引用 digest。仍是 `wezterm` 组件的旧锁会被拒绝。
 
 **0.5.0 准备中的锁**：herdr `fe54d5ff3050f503815a99140384c1e18a95fbbb`（仍为 0.9.3，含 fork CHANGELOG
-「Unreleased」的改动）、gx_ghostty `70ed69767604fdbdf470555b233cb48a3ffd90c7`（未打 tag，fork CHANGELOG 的 0.0.3 段仍为
+「Unreleased」的改动）、gx_ghostty `ac064c31d3c4d0411c6ef7c72fff0e8c2f853ebb`（未打 tag，fork CHANGELOG 的 0.0.3 段仍为
 `(TBD)`）、ohmyzsh `53da420d696617b52cf47d0438bdd66dbce831df`（只把依赖锁里的 herdr 换成 `fe54d5ff`），lock digest
-`b2c66ae498fff5d0258c2c7fa1420a22d2d91d738816beb462f773ac1188f7fe`，`check` 与 `check --require-remote` 本地通过。下面是最后一次发布的锁。
+`9a35509ed7c3860ca46751cf3d8cc502f8cc46488c80f5f4a3fd6b3292ada071`，`check` 与 `check --require-remote` 本地通过。下面是最后一次发布的锁。
 
 已发布的 0.4.1 锁的三个修订都是各自默认分支上的真实提交：herdr `702cf257f6a4c9e889a823c09c423bb3b748f8cb`（0.9.3）、
 ohmyzsh `5b55db6f6ac1ac90676d5dc0192381aa6459e501`、gx_ghostty `1be3d19fc75f012317c09a7d55fa4be2380fb4a4`（Ghostty GX
@@ -509,7 +509,7 @@ Windows 在根目录可运行
 以下为目标路线。0.3.0（WezTerm GX）的最终锁 run `36998777427` 完成过路线 1 与路线 2；0.4.0（Ghostty GX）的最终锁
 （gx_ghostty 发布提交 `5525f8bc`）在手动验收 run `37973258654` 与发布 run `37980632775` 上都完成了路线 1 与路线 2；
 0.4.1 的最终锁（gx_ghostty 发布提交 `1be3d19f`）在发布 run `38009098652` 上完成了路线 1 与路线 2；0.5.0 的锁（gx_ghostty
-`70ed6976`）尚未运行任何路线。**路线 3 的硬件 GPU 仍受阻**，
+`ac064c31`）尚未运行任何路线。**路线 3 的硬件 GPU 仍受阻**，
 结果见下节：
 
 1. **GitHub-hosted Windows**：生成完整 payload，用 Inno Setup 7.1 编译安装器，再以
@@ -530,17 +530,17 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 ### 本轮快照与当前待验证项
 
-#### 0.5.0 准备：Ghostty GX `70ed6976`、herdr `fe54d5ff` 与通知身份登记（2026-10-18，未发布）
+#### 0.5.0 准备：Ghostty GX `ac064c31`、herdr `fe54d5ff` 与通知身份登记（2026-10-18，未发布）
 
 本轮还没有定版、提交、打 tag 或发布，CHANGELOG 新增的 `## 0.5.0(TBD)` 段是发布前草稿，`(TBD)` 会阻止发布。以下只记录
 当前工作区的状态；构建、测试与两平台验收都还没有运行，全部是 PENDING，CI 运行后按实际结果补记，不能把下表当作验收结论。
 
 - **来源锁**：herdr `fe54d5ff3050f503815a99140384c1e18a95fbbb`（`Cargo.toml` 仍为 0.9.3，带 fork CHANGELOG
-  「Unreleased」的改动）、gx_ghostty `70ed69767604fdbdf470555b233cb48a3ffd90c7`（未打 tag，fork CHANGELOG 的 `0.0.3(TBD)`
+  「Unreleased」的改动）、gx_ghostty `ac064c31d3c4d0411c6ef7c72fff0e8c2f853ebb`（未打 tag，fork CHANGELOG 的 `0.0.3(TBD)`
   段尚未定版）、ohmyzsh `53da420d696617b52cf47d0438bdd66dbce831df`（已推到 `feature/gx_ohmyzsh`，只把依赖锁
-  `scripts/packaging/dependencies.json` 等里的 herdr 换成 `fe54d5ff`）。lock digest `b2c66ae4…`，`check` 与
+  `scripts/packaging/dependencies.json` 等里的 herdr 换成 `fe54d5ff`）。lock digest `9a35509e…`，`check` 与
   `check --require-remote` 本地通过。
-- **版本串**：gx_ghostty 消费契约规定版本串为 `<build.zig.zon 的 X.Y.Z>-gx.<fork 版本>`；`70ed6976` 的 `build.zig.zon`
+- **版本串**：gx_ghostty 消费契约规定版本串为 `<build.zig.zon 的 X.Y.Z>-gx.<fork 版本>`；`ac064c31` 的 `build.zig.zon`
   为 `1.3.2-dev`、fork CHANGELOG 最大版本为 `0.0.3(TBD)`，预计是 `1.3.2-gx.0.0.3`。未定版的 `(TBD)` 能否被 prepare 接受、
   实际输出是什么都 PENDING，以 prepare 的输出为准。
 - **安装器**：`packaging/windows/gx-shell.iss` 改为登记 Ghostty GX 的通知身份（HKCU
@@ -548,8 +548,13 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
   `Software\Classes\CLSID\{978ab84b-3cac-4593-95d5-2e04d68eed4f}`，只在仍属于本安装目录时改写或删除，被别的安装目录占用
   时拒绝安装）。Inno Setup 7.1 夹具编译与根单测已通过；Windows 冒烟新增对这些登记、快捷方式 AUMID 与卸载删除的检查，
   真实安装与卸载只能在一次性 runner 上验证，PENDING。系统通知能否真正弹出、点击能否回到终端不在 CI 范围内。
-- **组件 fork**：herdr `fe54d5ff` 与 gx_ghostty `70ed6976` 的 fork CI 结果本轮没有核对；Ghostty GX 在 runner 上的契约测试
-  与 `zig_test.py --suite main -Dapp-runtime=none` 由根 `ghostty-tests` 覆盖，PENDING。
+- **组件 fork**：第一次完整验收（run 39063227377，锁 gx_ghostty `70ed6976`）中 `ghostty-tests` 的
+  `-Dapp-runtime=none` 编译失败（GX 一次性键表续延把 `App.newWindow` 带进 none 运行时）；该修订自己的 gx-ci 也因
+  `test_gx_wsl` 线程统计偶发失败而红。已在 gx_ghostty 修复（`e9cc44ec`、`56293eef`），并让无音频设备的 runner 跳过原生
+  WinMM 用例（`ac064c31`）；`ac064c31` 的 gx-ci（run 39066236903）全部 job 通过，锁随之改为它。同一次验收里
+  ghostty-windows/linux、shell-windows/linux、package-linux、ohmyzsh-posix、smoke-linux（24.04）与 package-windows
+  （含 Inno Setup 7.1 编译、根单测 Ran 260 OK skipped=8 与安装—使用—重装—卸载冒烟及通知身份检查）均通过；
+  因 ghostty-tests 失败，verify 被跳过。herdr `fe54d5ff` 的 fork CI 未单独核对，由根 shell 构建覆盖。
 - **本轮实际做过的**：本地 `main` 对齐 `origin/main`（0.4.1）并删除多余的 `ghostty-gx` 分支；ohmyzsh 的 herdr 依赖锁更新为
   `fe54d5ff` 并推送 `53da420d`（该 fork 的 `test_gx_*` 251 项中 1 error 为本机缺 Zsh、1 skip）；新增
   `scripts/gx_shell_setup.*` 把 CPython 3.12.12、actionlint 1.7.12 与 Inno Setup 7.1 钉版装进 `.local/tools`。在沙箱内用这套工具：
@@ -559,7 +564,7 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 
 | 项目 | 0.5.0 当前边界 |
 |---|---|
-| 来源锁 | PASS（本地）：herdr `fe54d5ff`、ohmyzsh `53da420d`、gx_ghostty `70ed6976`，digest `b2c66ae4…`，`check` 与 `check --require-remote` 通过 |
+| 来源锁 | PASS（本地）：herdr `fe54d5ff`、ohmyzsh `53da420d`、gx_ghostty `ac064c31`，digest `9a35509e…`，`check` 与 `check --require-remote` 通过 |
 | 根测试 / workflow 静态检查 | PASS（本地）：根单测 Ran 260，OK（skipped=10）；Inno Setup 7.1 夹具编译 2 项单独通过；`release.yml` 新增通知身份比对，actionlint 1.7.12 通过 |
 | `gx-shell.iss`（通知身份） | 编译 PASS（Inno Setup 7.1 夹具）；安装冒烟对登记、快捷方式 AUMID 与卸载删除的验证 PENDING（CI） |
 | Ghostty GX stage 与测试（CI） | PENDING：`ghostty-windows`、`ghostty-linux`、`ghostty-tests` 未运行 |
@@ -568,7 +573,7 @@ CPU 构建资源预算与 GPU 运行时验收分开，GPU 不用于编译加速�
 | Windows 安装生命周期 / 软件渲染窗口 | PENDING：须在一次性 runner 上运行并人工审阅截图 |
 | DEB 构建与 Ubuntu 24.04 冒烟 | PENDING |
 | 系统通知实际显示 / 跳转列表 | 不在 CI 范围：Ghostty GX 自己的安装版实测中早期有三次通知未显示，原因未定位 |
-| 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT`，`70ed6976` 尚未重新审计 |
+| 硬件 GPU / 窗口 | BLOCKED：`Run` 返回 `BLOCKED_PENDING_ISOLATION_AUDIT`，`ac064c31` 尚未重新审计 |
 | 桌面输入 / 拖放 / 跨进程拖动标签 / UI Automation | 未验证 |
 | 从 0.4.1 及更早版本升级 | 未验证：workflow 不传旧安装包 |
 | 发布 | 未进行：CHANGELOG 为 `0.5.0(TBD)`，没有 tag |

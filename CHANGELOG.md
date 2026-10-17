@@ -11,7 +11,7 @@ GitHub Release 说明，只写面向用户的变化；验收过程与内部记�
 ## 0.5.0(TBD)
 
 本版把随包的 Ghostty GX 更新到 0.0.3 的开发修订、herdr 更新到 fork 的最新修订，并让 Windows 安装程序登记 Ghostty GX
-的系统通知身份。组件为 Ghostty GX 0.0.3 的未发布修订（`70ed6976`，未打 tag）、herdr 0.9.3 加 fork 尚未发布的改动
+的系统通知身份。组件为 Ghostty GX 0.0.3 的未发布修订（`ac064c31`，未打 tag）、herdr 0.9.3 加 fork 尚未发布的改动
 （`fe54d5ff`）与 Oh My Zsh GX `53da420d`（只把依赖锁里的 herdr 换成同一修订，GX Zsh 本身不变）。**本段是发布前草稿**：
 发布前须在 GitHub Actions 上完成与 0.4.1 相同的两平台构建与测试（含 Ghostty GX 的打包契约与核心测试、Oh My Zsh GX 在
 真实 Zsh 与伪终端上的测试）、Windows 一次性 runner 上的安装—使用—同版本重装—卸载冒烟、Ubuntu 24.04 干净容器里的
@@ -90,7 +90,7 @@ DEB 冒烟，以及两平台产物的来源与散列核对，定版时按实际�
 - Windows 系统通知是否真正弹出、点击后能否回到终端没有在 CI 中验证（Ghostty GX 自己的安装版实测里，早期有三次通知
   未显示，原因尚未定位）。
 - 从旧版本升级（包括从 0.4.1 升级到本版）没有在 CI 中验证。
-- 随包的 Ghostty GX 是未打 tag 的开发修订（`70ed6976`），它的 CHANGELOG 里 0.0.3 尚未定版，没有对应的 Ghostty GX
+- 随包的 Ghostty GX 是未打 tag 的开发修订（`ac064c31`），它的 CHANGELOG 里 0.0.3 尚未定版，没有对应的 Ghostty GX
   正式 Release；herdr 同样是 fork 尚未发布的修订。
 - 装好 GX Shell 之后再单独安装 Ghostty GX，两者的「Ghostty GX」快捷方式、`App Paths\ghostty.exe` 与通知身份仍会冲突；
   再次运行 GX Shell 安装程序会先卸载单独安装的 Ghostty GX（为所有用户安装的仍需管理员）。
